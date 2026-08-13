@@ -25,11 +25,29 @@ import logging
 import time
 
 from numpy.typing import NDArray
+import os
+import sys
 
+# Ensure Qt uses a suitable platform plugin and finds fonts before importing OpenCV.
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+# Require matplotlib at runtime so bundled DejaVu fonts are always available.
+try:
+    import matplotlib
+except Exception as e:  # pragma: no cover - explicit runtime dependency
+    print("matplotlib is required to provide bundled fonts for Qt. Install via: pip install matplotlib")
+    raise
+
+# Use matplotlib's bundled TTF fonts directory for Qt so fonts are always present.
+_mfdir = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
+if not os.path.isdir(_mfdir):  # pragma: no cover - defensive
+    print("matplotlib fonts directory not found; ensure matplotlib is correctly installed")
+    sys.exit(1)
+
+os.environ.setdefault("QT_FONTDIR", _mfdir)
 import cv2
 import numpy as np
 import threading
-import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
@@ -388,8 +406,14 @@ class P3Viewer:
         print("Press 'h' for help")
 
         window_name = f"{model_name} Thermal"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 720)
+        try:
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, 1280, 720)
+        except cv2.error as e:
+            logging.error("OpenCV/Qt window creation failed: %s", e)
+            print("OpenCV/Qt window creation failed. Ensure a Qt platform plugin is available (xcb/wayland) or run under X11.")
+            self.camera.stop_streaming()
+            return
 
         try:
             while True:
@@ -417,11 +441,17 @@ class P3Viewer:
 
                 if not self._handle_key(thermal):
                     break
-                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                try:
+                    if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                        break
+                except cv2.error:
                     break
         finally:
             self.camera.stop_streaming()
-            cv2.destroyAllWindows()
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
 
     def _update_fps(self) -> None:
         self._fps_count += 1
