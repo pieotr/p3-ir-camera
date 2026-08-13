@@ -391,7 +391,11 @@ class P3Viewer:
         self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         self._last_display: NDArray[np.uint8] | None = None
         self._prev_frame: NDArray[np.uint16] | None = None
+        self._latest_thermal_raw: NDArray[np.uint16] | None = None
         self._ir_brightness: NDArray[np.uint8] | None = None
+        self._window_name: str = f"{self.model.value.upper()} Thermal"
+        self._main_view_size: tuple[int, int] = (0, 0)  # (h, w) of main pane before lock-in panes
+        self._mouse_xy: tuple[int, int] | None = None
         # Disconnection / reconnect UI state
         self._disconnected: bool = False
         self._reconnect_requested: bool = False
@@ -412,11 +416,10 @@ class P3Viewer:
         self.camera.start_streaming()
         print("Press 'h' for help")
 
-        window_name = f"{model_name} Thermal"
         try:
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(window_name, 1280, 720)
-            cv2.setMouseCallback(window_name, self._on_mouse)
+            cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self._window_name, 1280, 720)
+            cv2.setMouseCallback(self._window_name, self._on_mouse)
         except cv2.error as e:
             logging.error("OpenCV/Qt window creation failed: %s", e)
             print("OpenCV/Qt window creation failed. Ensure a Qt platform plugin is available (xcb/wayland) or run under X11.")
@@ -444,6 +447,7 @@ class P3Viewer:
                         continue
                     if thermal is None:
                         continue
+                    self._latest_thermal_raw = thermal.copy()
                 else:
                     # Disconnected state: show reconnect UI and wait for user action
                     blank = np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -453,7 +457,7 @@ class P3Viewer:
                     x, y, w, h = self._reconnect_btn
                     cv2.rectangle(blank, (x, y), (x + w, y + h), (0, 128, 255), -1)
                     cv2.putText(blank, "Reconnect", (x + 20, y + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-                    cv2.imshow(window_name, blank)
+                    cv2.imshow(self._window_name, blank)
                     k = cv2.waitKey(100) & 0xFF
                     if k == ord('q'):
                         break
@@ -486,14 +490,14 @@ class P3Viewer:
                 self._prev_frame = thermal.copy()
 
                 self._last_display = self._render(thermal)
-                window_name = f"{self.model.value.upper()} Thermal"
-                cv2.imshow(window_name, self._last_display)
+                cv2.imshow(self._window_name, self._last_display)
                 self._update_fps()
+                self._update_hover_statusbar(thermal)
 
                 if not self._handle_key(thermal):
                     break
                 try:
-                    if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    if cv2.getWindowProperty(self._window_name, cv2.WND_PROP_VISIBLE) < 1:
                         break
                 except cv2.error:
                     break
@@ -550,6 +554,92 @@ class P3Viewer:
             cy_d, cx_d = w-cx_d-1, cy_d
 
         return cy_d, cx_d
+
+    def _display_to_thermal(
+        self,
+        x: int,
+        y: int,
+        thermal: NDArray[np.uint16],
+        main_h: int,
+        main_w: int,
+    ) -> tuple[int, int] | None:
+        """Map displayed image coordinates back to thermal pixel coordinates."""
+        if x < 0 or y < 0 or x >= main_w or y >= main_h:
+            return None
+
+        # Dimensions before rotation (after scaling/zooming/mirror step).
+        if self.rotation in (90, 270):
+            pre_h, pre_w = main_w, main_h
+        else:
+            pre_h, pre_w = main_h, main_w
+
+        # Invert rotation: displayed -> mirrored pre-rotation image coordinates.
+        if self.rotation == 90:
+            y_m = pre_h - 1 - x
+            x_m = y
+        elif self.rotation == 180:
+            y_m = pre_h - 1 - y
+            x_m = pre_w - 1 - x
+        elif self.rotation == 270:
+            y_m = x
+            x_m = pre_w - 1 - y
+        else:
+            y_m = y
+            x_m = x
+
+        if not (0 <= x_m < pre_w and 0 <= y_m < pre_h):
+            return None
+
+        # Invert mirror.
+        if self.mirror:
+            x_u = pre_w - 1 - x_m
+        else:
+            x_u = x_m
+        y_u = y_m
+
+        th, tw = thermal.shape
+        cx = int(round((x_u / max(1, pre_w)) * tw))
+        cy = int(round((y_u / max(1, pre_h)) * th))
+        cx = int(np.clip(cx, 0, tw - 1))
+        cy = int(np.clip(cy, 0, th - 1))
+        return cy, cx
+
+    def _get_hover_pixel_stats(
+        self,
+        thermal: NDArray[np.uint16],
+    ) -> tuple[int, int, int, float] | None:
+        """Return hovered (y, x, raw, corrected_temp_c), or None when out of main image."""
+        if self._mouse_xy is None:
+            return None
+
+        main_h, main_w = self._main_view_size
+        if main_h <= 0 or main_w <= 0:
+            return None
+
+        x, y = self._mouse_xy
+        coord = self._display_to_thermal(x, y, thermal, main_h, main_w)
+        if coord is None:
+            return None
+
+        cy, cx = coord
+        source = self._latest_thermal_raw if self._latest_thermal_raw is not None else thermal
+        raw = int(source[cy, cx])
+        temp_c = float(raw_to_celsius_corrected(raw, self.camera.env_params))
+        return cy, cx, raw, temp_c
+
+    def _update_hover_statusbar(self, thermal: NDArray[np.uint16]) -> None:
+        """Update Qt/OpenCV statusbar text with exact pixel temperature under cursor."""
+        stats = self._get_hover_pixel_stats(thermal)
+        if stats is None:
+            return
+
+        cy, cx, raw, temp_c = stats
+        text = f"Pixel ({cx}, {cy}) raw={raw} temp={temp_c:.10f} C"
+        try:
+            cv2.displayStatusBar(self._window_name, text, 0)
+        except cv2.error:
+            # Not all OpenCV backends support status bars.
+            pass
 
     def _draw_box_marker(
         self,
@@ -668,6 +758,7 @@ class P3Viewer:
         self._draw_overlays(result, thermal, frame_stats)
 
         # If lock-in results exist, composite two panes to the right
+        self._main_view_size = result.shape[:2]
         if self.lockin_controller is not None:
             in_phase, quad, amplitude, angle = self.lockin_controller.get_latest()
             if in_phase is not None and quad is not None and amplitude is not None and angle is not None:
@@ -816,7 +907,13 @@ class P3Viewer:
         gain_name = self.camera.gain_mode.name
         emissivity = self.camera.env_params.emissivity
         scale = self.scale_mode.name if self.scale_mode != ScaleMode.OFF else ""
-        status = f"{self.fps:.1f} FPS | {cmap_name} | {gain_name} | e={emissivity:.2f} {scale}"
+        hover = self._get_hover_pixel_stats(thermal)
+        if hover is not None:
+            py, px, praw, ptemp = hover
+            pixel_txt = f" | px({px},{py}) raw={praw} T={ptemp:.10f}C"
+        else:
+            pixel_txt = ""
+        status = f"{self.fps:.1f} FPS | {cmap_name} | {gain_name} | e={emissivity:.2f} {scale}{pixel_txt}"
         cv2.putText(
             img, 
             status, 
@@ -1009,6 +1106,7 @@ class P3Viewer:
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
         """Mouse callback for reconnect button."""
+        self._mouse_xy = (x, y)
         if event == cv2.EVENT_LBUTTONUP and self._disconnected:
             bx, by, bw, bh = self._reconnect_btn
             if bx <= x <= bx + bw and by <= y <= by + bh:
