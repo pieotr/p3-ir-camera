@@ -23,6 +23,7 @@ from typing import Any, cast
 
 import logging
 import time
+import contextlib
 
 from numpy.typing import NDArray
 import os
@@ -50,6 +51,7 @@ import numpy as np
 import threading
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+import usb.core
 
 from lockin import LockInController
 
@@ -390,6 +392,11 @@ class P3Viewer:
         self._last_display: NDArray[np.uint8] | None = None
         self._prev_frame: NDArray[np.uint16] | None = None
         self._ir_brightness: NDArray[np.uint8] | None = None
+        # Disconnection / reconnect UI state
+        self._disconnected: bool = False
+        self._reconnect_requested: bool = False
+        # Button rectangle (x, y, w, h) in window coordinates for 'Reconnect'
+        self._reconnect_btn = (540, 300, 200, 64)
         # Lock-in controller (created on demand)
         self.lockin_controller: LockInController | None = None
         self.lockin_thread: threading.Thread | None = None
@@ -409,6 +416,7 @@ class P3Viewer:
         try:
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(window_name, 1280, 720)
+            cv2.setMouseCallback(window_name, self._on_mouse)
         except cv2.error as e:
             logging.error("OpenCV/Qt window creation failed: %s", e)
             print("OpenCV/Qt window creation failed. Ensure a Qt platform plugin is available (xcb/wayland) or run under X11.")
@@ -418,8 +426,51 @@ class P3Viewer:
         try:
             while True:
 
-                ir_brightness, thermal = self.camera.read_frame_both()
-                if thermal is None:
+                if not self._disconnected:
+                    try:
+                        ir_brightness, thermal = self.camera.read_frame_both()
+                    except usb.core.USBError as e:
+                        logging.warning("Camera USB error: %s", e)
+                        # mark disconnected and stop streaming
+                        self._disconnected = True
+                        with contextlib.suppress(Exception):
+                            self.camera.stop_streaming()
+                        continue
+                    except Exception as e:
+                        logging.warning("Camera read error: %s", e)
+                        self._disconnected = True
+                        with contextlib.suppress(Exception):
+                            self.camera.stop_streaming()
+                        continue
+                    if thermal is None:
+                        continue
+                else:
+                    # Disconnected state: show reconnect UI and wait for user action
+                    blank = np.zeros((720, 1280, 3), dtype=np.uint8)
+                    # Draw message
+                    cv2.putText(blank, "Camera disconnected", (420, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 2)
+                    cv2.putText(blank, "Click the button or press 'o' to reconnect", (340, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+                    x, y, w, h = self._reconnect_btn
+                    cv2.rectangle(blank, (x, y), (x + w, y + h), (0, 128, 255), -1)
+                    cv2.putText(blank, "Reconnect", (x + 20, y + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                    cv2.imshow(window_name, blank)
+                    k = cv2.waitKey(100) & 0xFF
+                    if k == ord('q'):
+                        break
+                    if k == ord('o') or self._reconnect_requested:
+                        self._reconnect_requested = False
+                        # try to reconnect
+                        try:
+                            with contextlib.suppress(Exception):
+                                self.camera.disconnect()
+                            self.camera.connect()
+                            name, version = self.camera.init()
+                            print(f"Reconnected: {name}, Firmware: {version}")
+                            self.camera.start_streaming()
+                            self._disconnected = False
+                        except Exception as e:
+                            logging.warning("Reconnect failed: %s", e)
+                            # stay disconnected and continue showing UI
                     continue
                 self._ir_brightness = ir_brightness
 
@@ -912,6 +963,18 @@ class P3Viewer:
                     self.lockin_running = False
                     self.lockin_controller = None
                     self.lockin_thread = None
+        elif key == ord('o'):
+            # manual reconnect key
+            try:
+                with contextlib.suppress(Exception):
+                    self.camera.disconnect()
+                self.camera.connect()
+                name, version = self.camera.init()
+                print(f"Reconnected: {name}, Firmware: {version}")
+                self.camera.start_streaming()
+                self._disconnected = False
+            except Exception as e:
+                print("Reconnect failed:", e)
         elif key == ord("a"):
             self.agc_mode = AGCMode((self.agc_mode + 1) % len(AGCMode))
             print(f"AGC: {self.agc_mode.name}")
@@ -943,6 +1006,13 @@ class P3Viewer:
         else:
             self.dde_strength = 0.3
         print(f"DDE: {'ON' if self.dde_strength > 0 else 'OFF'}")
+
+    def _on_mouse(self, event, x, y, flags, param) -> None:
+        """Mouse callback for reconnect button."""
+        if event == cv2.EVENT_LBUTTONUP and self._disconnected:
+            bx, by, bw, bh = self._reconnect_btn
+            if bx <= x <= bx + bw and by <= y <= by + bh:
+                self._reconnect_requested = True
 
     def _dump(self, thermal: NDArray[np.uint16]) -> None:
         """Dump raw thermal data to file."""

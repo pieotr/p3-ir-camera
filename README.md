@@ -155,3 +155,23 @@ If you have a P3 camera and want to help improve this tool, PRs are welcome!
 ## License
 
 Apache 2.0
+
+
+
+
+
+# todo:  
+the sudden unplug and replug of the camera seems great, but the close the app, by clicking the X button on the window, seems to not be finshing the stream on the camera, as the dropping frame error print is still there ~/Desktop/Priv/THermal/p3-ir-camera Testing-and-fixes* ⇡
+venv ❯ python ./p3_viewer.py
+P3 Thermal Viewer
+Device: P3, Firmware: 00.00.02.18
+Press 'h' for help
+
+~/Desktop/Priv/THermal/p3-ir-camera Testing-and-fixes* ⇡ 7s
+venv ❯ python ./p3_viewer.py
+P3 Thermal Viewer
+Device: P300.02.18, Firmware: 00.00.02.18
+Press 'h' for help
+DEBUG:p3_camera:Frame reading out of sync, dropping frame
+DEBUG:p3_camera:Frame reading out of sync, dropping frame
+         the wierd this is after those two dropped warnings, the camerea works alright and app works and there is no more warnings..
