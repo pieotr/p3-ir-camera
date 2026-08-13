@@ -100,7 +100,7 @@ p3-viewer --frequency 0.1 --integration 120
 - `+`/`-` - Zoom in/out
 - `e` - Cycle emissivity presets
 - `1-9` - Set emissivity (0.1-0.9)
-- `D` - Dump raw thermal data to file
+- `y` - Dump raw thermal data to file
 - `Space` - Screenshot
 - `l` - Activate lock-in thermography (see lock-in.md)
 - `b` - Toggle min/max spot marker

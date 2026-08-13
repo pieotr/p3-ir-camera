@@ -8,7 +8,7 @@ Controls:
   r - Rotate 90°     c - Colormap
   s - Shutter/NUC    g - Gain mode
   m - Mirror         h - Help
-  space - Screenshot D - Dump raw data
+  space - Screenshot y - Dump raw data
   e - Emissivity     1-9 - Set emissivity (0.1-0.9)
   x - Scale mode     p - Enhanced (CLAHE+DDE)
   a - AGC mode       t - Toggle reticule
@@ -781,7 +781,7 @@ class P3Viewer:
         """Draw help overlay."""
         lines = [
             "q-Quit  h-help",
-            "space-Shot  D-Dump",
+            "space-Shot  y-Dump",
             "+/- Zoom  r-Rotate  m-Mirror",
             "s-Shutter  g-High/Low Gain",
             "c-Colormap  v-Colorbar",
@@ -842,7 +842,7 @@ class P3Viewer:
             self._set_emissivity((key - ord("0")) / 10.0)
         elif key == ord("d"):
             self._toggle_dde()
-        elif key == ord("D"):
+        elif key == ord("y"): 
             self._dump(thermal)
         elif key == ord(" "):
             self._screenshot()
