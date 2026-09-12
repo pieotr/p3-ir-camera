@@ -1,177 +1,96 @@
-# P3 IR Camera
+# P3 Thermal Studio
 
-Python driver and viewer for P3-series USB thermal cameras.  Improved? with lock-in thermography function.  See LOCK-IN.md
+Modułowa aplikacja desktopowa do kamer termowizyjnych **P3 (256 × 192)** i **P1 (160 × 120)**. Nowy viewer zastępuje demonstracyjne okno OpenCV interfejsem Tk/ttk: panel ustawień, niezależny od USB interfejs, inspekcja pikseli i bezstratny eksport.
 
-![P3 Viewer - Keyboard](screenshots/jvdillon-keyboard.png)
-![P3 Viewer - Chip](screenshots/huberbenno-chip.png)
-
-Images courtesy of [jvdillon](https://github.com/jvdillon) and
-[huberbenno](https://github.com/huberbenno)
-([PR#11](https://github.com/jvdillon/p3-ir-camera/pull/11)).
-
-![ESP32](screenshots/esp32-lockin.png)
-
-**Devices**:
-
-- P1: VID=0x3474, PID=0x45C2, 160×120 native resolution
-- P3: VID=0x3474, PID=0x45A2, 256×192 native resolution
-
-> **Disclaimer**: This is an independent open-source project. It is not
-> affiliated with, endorsed by, or connected to any camera manufacturer.
-> Protocol details were determined through USB traffic analysis and
-> experimentation.
-
-## Features
-
-- USB driver for frame capture and device control
-- Real-time thermal viewer with multiple colormaps
-- Temperature measurement at cursor position
-- Temporal noise reduction and digital detail enhancement
-- Multiple AGC modes (factory hardware AGC, temporal percentile, fixed range)
-- Shutter/NUC calibration control
-- High/Low gain mode switching
-- Rudimentary lock-in thermography for finding very small temperature changes
-
-## Installation
+## Uruchomienie
 
 ```bash
-git clone https://github.com/jvdillon/p3-ir-camera
-cd p3-ir-camera
 pip install -e .
+p3-viewer                 # P3
+p3-viewer --model p1      # P1
+p3-viewer --demo          # syntetyczne dane, bez kamery
+python p3_viewer.py --demo
 ```
 
-### USB Permissions (Linux)
+Wymagany Python ≥ 3.10, NumPy, OpenCV, PyUSB i **Tk 8.6+**. Tk jest składnikiem instalacji Pythona, nie pakietem pip. W Debianie/Ubuntu zapewnia go `python3-tk`, w Arch Linux `tk`; środowisko wirtualne musi korzystać z Pythona z obsługą Tk. Sesja graficzna jest wymagana; aplikacja nie korzysta z backendu Qt biblioteki OpenCV. Pozostałe zależności historyczne pozostają w projekcie na potrzeby eksperymentów.
 
-Create a udev rule to allow non-root access:
+### Dostęp USB
+
+Linux: utwórz `/etc/udev/rules.d/99-p3-ir.rules`:
+
+```udev
+SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45c2", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", TAG+="uaccess"
+```
+
+Przeładuj reguły (`sudo udevadm control --reload-rules`), odłącz i podłącz kamerę. Reguły udostępniają urządzenie aktywnej lokalnej sesji. Windows wymaga backendu libusb/WinUSB; wcześniejsza konfiguracja używała Zadig dla urządzenia o VID `3474` i PID `45C2` lub `45A2`. Obsługa sprzętu na Windows/macOS wymaga osobnego sprawdzenia.
+
+## Temperatura konkretnego piksela
+
+Pod obrazem, **po lewej**, są dwa oddzielne wiersze: powiększenie oraz `Pixel (x, y) / temperatura °C / RAW`. Współrzędne są zerowane od lewego górnego rogu oryginalnego sensora i pozostają poprawne po obrocie, odbiciu oraz przesunięciu obrazu.
+
+Dane kamery mają postać `uint16`, a konwersja wynosi:
+
+```text
+°C = RAW / 64 − 273.15
+krok kodowania = 0.015625 K
+przykład: RAW 19000 → 23.725000 °C
+```
+
+Odczyty mają **6 miejsc po przecinku**, co zachowuje pełną rozdzielczość tego kodowania. To precyzja zapisu danych, nie deklaracja dokładności pomiarowej sensora. Pomiary nie są wyprowadzane z RGB, interpolacji ani klatek po filtracji. Pokazywana jest temperatura pozorna dostarczana przez kamerę, bez dodatkowej programowej korekcji emisyjności.
+
+**Ctrl+X** ustawia powiększenie 12800%, z siatką i temperaturą każdego widocznego piksela. Siatka zaczyna się przy 2800%, pełne etykiety przy 9600%, maksimum to 25600%. Przy mniejszej komórce pełny odczyt pozostaje pod obrazem. Wbudowany inspektor RGB OpenCV został całkowicie usunięty.
+
+## Funkcje
+
+| Element | Działanie |
+| --- | --- |
+| Temperature | Obraz z bieżącej, nieprzetworzonej temperatury |
+| Filtered temperature | Wygładzanie czasowe EMA wyłącznie obrazu; regulowany udział nowej klatki |
+| Raw counts | Wizualizacja 16-bitowych kodów, zakres w jednostkach RAW |
+| Factory brightness | 8-bitowy obraz jasności z kamery; kolory nie oznaczają liniowej skali °C |
+| Palette | Inferno, Magma, Viridis, Turbo, Rainbow, White hot, Black hot |
+| Auto percentile | Percentyle 1–99 z płynną adaptacją zakresu |
+| Fixed | Własny zakres °C; wymaga Apply range i maksimum większego od minimum |
+| Enhance contrast / detail | CLAHE i wyostrzanie wizualizacji; wyłącza ilościową legendę |
+| Freeze / Resume | Zatrzymuje wyświetlaną klatkę; kamera nadal jest odczytywana |
+| Shutter / NUC | Kalibracja migawką wykonywana przez wątek USB |
+| Sensor gain | HIGH; LOW dostępny eksperymentalnie, z wykrytym przesunięciem temperatur na firmware 00.00.02.18; AUTO nie jest zaimplementowane |
+| Reconnect | Natychmiastowa próba połączenia; bez kamery aplikacja ponawia próby automatycznie co 2 s |
+| Save data | NPZ z oryginalnym RAW, jasnością i metadanymi |
+| Save image | PNG w rozdzielczości sensora, z aktualną paletą i orientacją |
+
+Min/max i średnia dotyczą całej oryginalnej klatki, również podczas zoomu. W trybie demo wszystkie dane są syntetyczne, a sterowanie sensorem jest niedostępne. **Do pomiarów używaj HIGH**: test fizycznej P3 wykazał w LOW odczyty około −34°C zamiast zakresu około 20–25°C tej samej sceny. NUC nie usunęło różnicy; nie dodano arbitralnej korekcji temperatur.
+
+### Nawigacja
+
+- Kółko myszy lub `+` / `−`: powiększanie; kółko zachowuje punkt pod kursorem.
+- Przeciąganie lewym przyciskiem: przesunięcie obrazu.
+- Dwuklik lub `Escape`: dopasowanie obrazu do okna.
+- `Ctrl+X`: inspekcja temperatur pikseli.
+- `Ctrl+S`: zapis danych termicznych.
+- Obrót i odbicie: przyciski w panelu bocznym.
+- Zamknięcie przez X: zatrzymanie wątku, strumienia i zwolnienie USB; działa także po odłączeniu kamery.
+
+Po odłączeniu kamery **okno pozostaje otwarte**, a obraz zastępuje komunikat o braku kamery. Aplikacja czeka na ponowne podłączenie i automatycznie wznawia podgląd po inicjalizacji. Działa to również przy uruchomieniu bez kamery. Wznowienie wyłącza Freeze; ustawienia obrazu pozostają zachowane. X zamyka aplikację także podczas oczekiwania.
+
+Stare jednoliterowe skróty demonstracyjnego viewera zastępują widoczne kontrolki. Historyczne opcje lock-in nie są przyjmowane przez nowe CLI.
+
+## Dokumentacja i rozwój
+
+- [Architektura, kontrakty modułów i rozbudowa](docs/ARCHITECTURE.md)
+- [Dane, eksport, diagnostyka i procedura testów](docs/OPERATIONS.md)
+- [Protokół USB](P3_PROTOCOL.md)
+- [Historyczny eksperyment lock-in](LOCK-IN.md) — zachowany w `lockin.py`, bez integracji z nowym GUI i bez nowych testów sprzętowych.
+- [Archiwum README i zgłoszonych problemów](docs/LEGACY_DEMO.md)
 
 ```bash
-sudo tee /etc/udev/rules.d/99-p3-ir.rules << EOF
-# P1 camera
-SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45c2", MODE="0666"
-# P3 camera
-SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", MODE="0666"
-EOF
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+pip install -e '.[dev]'
+python -m pytest -q
+# Opcjonalny test rzeczywistego okna, w sesji graficznej:
+P3_GUI_TEST=1 python -m pytest tests/gui_test.py -q
 ```
 
-### USB Driver (Windows)
+Testy nie są częścią uruchamiania aplikacji. `p3_camera_test.py` sprawdza bibliotekę; `p3_viewer_test.py` sprawdza nową implementację, a `tests/gui_test.py` jest opcjonalnym testem desktopu.
 
-pyusb requires a libusb-compatible driver. Use [Zadig](https://zadig.akeo.ie/):
-
-1. Download and run Zadig
-2. Options → List All Devices
-3. Select the camera (VID 3474, PID 45C2 for P1 or 45A2 for P3)
-4. Select **WinUSB** driver
-5. Click "Replace Driver"
-
-## Usage
-
-### Viewer
-
-```bash
-# Use P3 camera (default, 256×192)
-p3-viewer
-
-# Use P1 camera (160×120)
-p3-viewer --model=p1
-
-# Use P3 camera explicitly
-p3-viewer --model=p3
-
-# Lock-in thermography - press 'l' once viewer is open
-p3-viewer --frequency 0.1 --integration 120
-```
-
-**Controls:**
-
-- `q` - Quit
-- `h` - Toggle help overlay
-- `c` - Cycle colormap
-- `a` - Cycle AGC mode
-- `d` - Toggle DDE (detail enhancement)
-- `p` - Toggle enhanced mode (CLAHE + DDE)
-- `x` - Cycle scale/interpolation mode
-- `t` - Toggle reticule
-- `s` - Trigger shutter/NUC
-- `g` - Toggle gain mode (high/low)
-- `r` - Rotate display 90°
-- `m` - Mirror display
-- `+`/`-` - Zoom in/out
-- `e` - Cycle emissivity presets
-- `1-9` - Set emissivity (0.1-0.9)
-- `y` - Dump raw thermal data to file
-- `Space` - Screenshot
-- `l` - Activate lock-in thermography (see lock-in.md)
-- `b` - Toggle min/max spot marker
-- `v` - Toggle colorbar
-
-### Library
-
-```python
-from p3_camera import Model, P3Camera, get_model_config, raw_to_celsius
-
-# Use P3 camera (default)
-camera = P3Camera()
-# Or use P1 camera
-# camera = P3Camera(config=get_model_config(Model.P1))
-
-camera.connect()
-camera.init()
-camera.start_streaming()
-
-ir_brightness, thermal_raw = camera.read_frame_both()
-temps_celsius = raw_to_celsius(thermal_raw)
-
-# Center coordinates depend on model
-# P1: (59, 80), P3: (95, 128)
-print(f"Center temp: {temps_celsius[temps_celsius.shape[0]//2, temps_celsius.shape[1]//2]:.1f}C")
-
-camera.stop_streaming()
-camera.disconnect()
-```
-
-## Protocol Documentation
-
-See [P3_PROTOCOL.md](P3_PROTOCOL.md) for USB protocol details.
-
-## Contributing
-
-This project provides initial scaffolding for a P3 thermal camera application.
-There's significant potential to build something great here, and contributions
-are welcome!
-
-Some areas that could use help:
-
-- **macOS support** - USB handling on macOS
-- **GUI application** - Qt/GTK interface beyond the OpenCV viewer
-- **Recording/playback** - Video capture with thermal data preservation
-- **Radiometric analysis** - Region statistics, spot meters, isotherms
-- **Calibration tools** - Blackbody calibration, emissivity tables
-- **Documentation** - Protocol details, hardware information
-
-If you have a P3 camera and want to help improve this tool, PRs are welcome!
-
-## License
-
-Apache 2.0
-
-
-
-
-
-# todo:  
-the sudden unplug and replug of the camera seems great, but the close the app, by clicking the X button on the window, seems to not be finshing the stream on the camera, as the dropping frame error print is still there ~/Desktop/Priv/THermal/p3-ir-camera Testing-and-fixes* ⇡
-venv ❯ python ./p3_viewer.py
-P3 Thermal Viewer
-Device: P3, Firmware: 00.00.02.18
-Press 'h' for help
-
-~/Desktop/Priv/THermal/p3-ir-camera Testing-and-fixes* ⇡ 7s
-venv ❯ python ./p3_viewer.py
-P3 Thermal Viewer
-Device: P300.02.18, Firmware: 00.00.02.18
-Press 'h' for help
-DEBUG:p3_camera:Frame reading out of sync, dropping frame
-DEBUG:p3_camera:Frame reading out of sync, dropping frame
-         the wierd this is after those two dropped warnings, the camerea works alright and app works and there is no more warnings..
+Projekt niezależny od producenta. Szczegóły protokołu pochodzą z analizy komunikacji USB i eksperymentów. Licencja Apache 2.0. Oryginalny projekt: Joshua V. Dillon; podziękowania autorom protokołu, wcześniejszych rozszerzeń i zdjęć zachowane w dokumentacji historycznej.
