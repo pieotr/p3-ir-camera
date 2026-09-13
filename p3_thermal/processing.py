@@ -45,6 +45,7 @@ class DisplaySettings:
     alpha: float = 0.35
     detail: bool = False  # DDE only; legacy snapshots migrate the combined flag
     clahe: bool = False
+    dde_strength: float = 1.5
 
 
 class Processor:
@@ -56,9 +57,11 @@ class Processor:
     def reset(self):
         self.previous = None
         self.bounds = None
+        self.temperature_bands = None
 
     def render(self, raw, brightness, settings, custom_palette=None):
         """Return RGB sensor-sized image and actual display limits (or None)."""
+        self.temperature_bands = None
         data = temperature(raw)
         if settings.mode == "Filtered temperature":
             self.previous = (
@@ -95,11 +98,17 @@ class Processor:
         if settings.clahe:
             gray = cv2.createCLAHE(2.0, (8, 8)).apply(gray)
             limits = None
-        if settings.detail:
-            gray = cv2.addWeighted(
-                gray, 1.3, cv2.GaussianBlur(gray, (3, 3), 0), -0.3, 0
+        if settings.detail and settings.dde_strength > 0:
+            values = gray.astype(np.float32)
+            blurred = cv2.GaussianBlur(values, (0, 0), 1.2)
+            gray = (
+                np.clip(values + settings.dde_strength * (values - blurred), 0, 255)
+                .round()
+                .astype(np.uint8)
             )
             limits = None  # nonlinear enhancement invalidates a quantitative legend
+        if limits is None:
+            self.temperature_bands = observed_temperature_bands(raw, gray)
         if settings.palette in ("White hot", "Black hot"):
             if settings.palette == "Black hot":
                 gray = 255 - gray
@@ -125,3 +134,21 @@ def legend_colors(settings, custom_palette=None):
     return cv2.cvtColor(
         cv2.applyColorMap(gray, PALETTES[settings.palette]), cv2.COLOR_BGR2RGB
     ).reshape(256, 3)
+
+
+def observed_temperature_bands(raw, gray):
+    """Observed Celsius min/max per displayed color band, ordered high intensity first.
+
+    A local contrast operator has no unique inverse temperature curve. These ranges
+    report actual pixels in five disjoint intensity bands, not an invented inverse.
+    Empty bands are explicitly marked; values need not be monotonic.
+    """
+    bins = np.digitize(gray, [32, 96, 160, 224])
+    temps = temperature(raw)
+    result = []
+    for band in range(4, -1, -1):
+        values = temps[bins == band]
+        result.append(
+            (float(values.min()), float(values.max())) if values.size else None
+        )
+    return tuple(result)

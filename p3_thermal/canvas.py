@@ -20,7 +20,7 @@ class ThermalCanvas(tk.Canvas):
         self.auto_fit = True
         self.markers = True
         self.show_legend = True
-        self.legend_data: tuple[np.ndarray, float, float, str] | None = None
+        self.legend_data: tuple | None = None
         self.legend_rect = None
         self.legend_photo = None
         self.photo = None
@@ -225,7 +225,8 @@ class ThermalCanvas(tk.Canvas):
         """Overlay a labeled ramp; intensity legends deliberately never claim Celsius."""
         if not self.show_legend or self.legend_data is None:
             return
-        colors, low, high, unit = self.legend_data
+        colors, low, high, unit = self.legend_data[:4]
+        bands = self.legend_data[4] if len(self.legend_data) > 4 else None
         width, height = self.winfo_width(), self.winfo_height()
         if width < 180 or height < 180:
             return
@@ -250,12 +251,16 @@ class ThermalCanvas(tk.Canvas):
             data=f"P6\n18 {bar_height}\n255\n".encode() + ramp.tobytes(), format="PPM"
         )
         self.create_image(x, y + 25, image=self.legend_photo, anchor="nw")
-        for fraction in (0, 0.25, 0.5, 0.75, 1):
+        for index, fraction in enumerate((0, 0.25, 0.5, 0.75, 1)):
             value = high + (low - high) * fraction
+            label = f"{value:.2f}"
+            if bands is not None:
+                bounds = bands[index]
+                label = "—" if bounds is None else f"{bounds[0]:.2f}\n{bounds[1]:.2f}"
             self.create_text(
                 x + 25,
                 y + 25 + bar_height * fraction,
-                text=f"{value:.2f}",
+                text=label,
                 anchor="w",
                 fill="white",
                 font=("TkDefaultFont", 9),

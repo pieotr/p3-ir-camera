@@ -143,3 +143,52 @@ def test_snapshot_rejects_invalid_planes(tmp_path):
     )
     with pytest.raises(ValueError, match="uint16"):
         load_snapshot(path)
+
+
+def test_nonlinear_legend_reports_observed_temperature_ranges():
+    from p3_thermal.processing import observed_temperature_bands, temperature
+
+    raw = np.array([[19000, 19064, 19128, 19200, 19300, 19400]], np.uint16)
+    gray = np.array([[0, 20, 80, 140, 200, 255]], np.uint8)
+    bands = observed_temperature_bands(raw, gray)
+    temps = temperature(raw)[0]
+    assert bands[0] == (temps[5], temps[5])
+    assert bands[-1] == (temps[0], temps[1])
+    sparse = observed_temperature_bands(raw, np.zeros_like(gray))
+    assert sparse[0] is None
+    assert sparse[-1] == (temps.min(), temps.max())
+
+
+def test_dde_strength_and_snapshot_metadata_roundtrip(tmp_path):
+    from dataclasses import asdict
+
+    from p3_thermal.export import snapshot_display_settings
+
+    raw = np.full((32, 32), 19000, np.uint16)
+    raw[:, 16:] += 160
+    raw[12:20, 12:20] += 40
+    settings = DisplaySettings(
+        detail=True, dde_strength=0, range_mode="Fixed", minimum=20, maximum=35
+    )
+    original = Processor().render(raw, None, settings)[0]
+    settings.dde_strength = 3
+    processor = Processor()
+    sharp = processor.render(raw, None, settings)[0]
+    assert np.count_nonzero(original != sharp) > 100
+    assert processor.temperature_bands is not None
+    metadata = {"snapshot_version": 2, "display": asdict(settings)}
+    assert snapshot_display_settings(metadata).dde_strength == 3
+    frame = Frame(raw, np.zeros_like(raw, dtype=np.uint8), 0)
+    save_image(
+        tmp_path / "legend.png",
+        frame,
+        sharp,
+        "color_png",
+        legend=(
+            legend_colors(settings),
+            0,
+            255,
+            "°C min/max",
+            processor.temperature_bands,
+        ),
+    )

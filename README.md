@@ -52,20 +52,23 @@ Odczyty mają **6 miejsc po przecinku**, co zachowuje pełną rozdzielczość te
 | Palette | Inferno, Magma, Viridis, Turbo, Rainbow, White hot, Black hot |
 | Auto percentile | Percentyle 1–99 z płynną adaptacją zakresu |
 | Fixed | Własny zakres °C; wymaga Apply range i maksimum większego od minimum |
-| Enhance contrast / detail | CLAHE i wyostrzanie wizualizacji; wyłącza ilościową legendę |
+| CLAHE / DDE | Osobne przełączniki lokalnego kontrastu i wyostrzania w zakładce Filters; siła DDE 0–4 |
+| Legend | Pasek aktualnej skali na obrazie: maksimum u góry, minimum u dołu |
+| Palettes | Edycja własnych punktów °C/kolor, import i eksport JSON, trwała biblioteka |
 | Freeze / Resume | Zatrzymuje wyświetlaną klatkę; kamera nadal jest odczytywana |
 | Shutter / NUC | Kalibracja migawką wykonywana przez wątek USB |
 | Sensor gain | HIGH; LOW dostępny eksperymentalnie, z wykrytym przesunięciem temperatur na firmware 00.00.02.18; AUTO nie jest zaimplementowane |
 | Reconnect | Natychmiastowa próba połączenia; bez kamery aplikacja ponawia próby automatycznie co 2 s |
 | Save data | NPZ z oryginalnym RAW, jasnością i metadanymi |
-| Save image | PNG w rozdzielczości sensora, z aktualną paletą i orientacją |
+| Save image | Wygładzony JPEG, natywny 16-bitowy PNG RAW lub kolorowy PNG; opcjonalna legenda |
+| Open RAW | Wczytanie NPZ do analizy zamrożonej klatki; Return to live wraca do kamery |
 
 Min/max i średnia dotyczą całej oryginalnej klatki, również podczas zoomu. W trybie demo wszystkie dane są syntetyczne, a sterowanie sensorem jest niedostępne. **Do pomiarów używaj HIGH**: test fizycznej P3 wykazał w LOW odczyty około −34°C zamiast zakresu około 20–25°C tej samej sceny. NUC nie usunęło różnicy; nie dodano arbitralnej korekcji temperatur.
 
 ### Nawigacja
 
 - Kółko myszy lub `+` / `−`: powiększanie; kółko zachowuje punkt pod kursorem.
-- Przeciąganie lewym przyciskiem: przesunięcie obrazu.
+- Przeciąganie lewym przyciskiem lub ekranowe strzałki: przesunięcie obrazu. Przyciski `+`/`−`, Fit i Pixels są pod obrazem.
 - Dwuklik lub `Escape`: dopasowanie obrazu do okna.
 - `Ctrl+X`: inspekcja temperatur pikseli.
 - `Ctrl+S`: zapis danych termicznych.
@@ -75,6 +78,16 @@ Min/max i średnia dotyczą całej oryginalnej klatki, również podczas zoomu. 
 Po odłączeniu kamery **okno pozostaje otwarte**, a obraz zastępuje komunikat o braku kamery. Aplikacja czeka na ponowne podłączenie i automatycznie wznawia podgląd po inicjalizacji. Działa to również przy uruchomieniu bez kamery. Wznowienie wyłącza Freeze; ustawienia obrazu pozostają zachowane. X zamyka aplikację także podczas oczekiwania.
 
 Stare jednoliterowe skróty demonstracyjnego viewera zastępują widoczne kontrolki. Historyczne opcje lock-in nie są przyjmowane przez nowe CLI.
+
+## Analiza zapisanych klatek i własne kolory
+
+**Save data → NPZ** zachowuje pełne RAW, fabryczną jasność, ustawienia i definicję użytej własnej palety. **Open RAW** otwiera plik jako zamrożoną klatkę. Możesz nadal odczytywać temperatury pikseli, zmieniać palety, CLAHE/DDE, obrót i zoom oraz eksportować JPG/PNG/NPZ. Przychodzące klatki USB nie zastąpią importowanej klatki. Do podglądu kamery wracasz przez **Return to live**.
+
+Zakładka **Palettes → New** pozwala zdefiniować punkty temperatury i kolory (np. 15°C: niebieski, 25°C: zielony, 50°C: czerwony). `linear` tworzy gradient, `steps` — pasma. Presety można edytować, eksportować i importować jako JSON. Aplikacja pamięta je w lokalnej bibliotece; usuwać i nadpisywać można tylko palety użytkownika. Palety o bezwzględnych progach °C pomijają AGC, CLAHE i DDE, aby nie zmieniać znaczenia przypisanych kolorów.
+
+**Temperature** mapuje 16-bitowe odczyty temperatury na kolory według wybranego zakresu. **Factory brightness** wyświetla osobny 8-bitowy obraz przetworzony przez kamerę — jego jasność nie jest liniową skalą °C. Legenda pokazuje °C dla liniowych obrazów temperatury i RAW counts dla surowych kodów. Przy CLAHE, DDE i Factory brightness pokazuje rzeczywiste zakresy °C min/max w pięciu pasmach kolorów bieżącej klatki. Puste pasmo oznacza kreska; zakresy mogą się nakładać i nie muszą rosnąć monotonicznie, ponieważ przetwarzanie lokalne nie ma jednej odwrotnej skali temperatur. Zawsze odpowiada aktualnej skali palety, a nie nieprzetworzonym ekstremom odciętym przez zakres Auto/Fixed. Odczyt piksela zawsze pochodzi z oryginalnego RAW.
+
+**X³:** producent opisuje zwiększanie rozdzielczości P3 do 512×384, lecz dostępny sterownik nie ma zweryfikowanej komendy ani implementacji tego algorytmu. Kontrolka X³ jest jawnie nieaktywna. Zwykłe powiększenie JPEG nie jest trybem X³. [Informacje producenta](https://thermalmaster.com/pages/faqs).
 
 ## Dokumentacja i rozwój
 

@@ -218,6 +218,17 @@ class ThermalApp:
             command=self.update_settings,
         )
         self.dde_switch.pack(anchor="w", pady=8)
+        self.dde_strength = tk.DoubleVar(value=1.5)
+        self.dde_caption = tk.StringVar(value="DDE strength: 1.50")
+        ttk.Label(filters, textvariable=self.dde_caption).pack(anchor="w")
+        self.dde_slider = ttk.Scale(
+            filters,
+            from_=0.0,
+            to=4.0,
+            variable=self.dde_strength,
+            command=lambda value: self.update_settings(),
+        )
+        self.dde_slider.pack(fill="x", pady=(0, 8))
         ttk.Checkbutton(
             filters, text="X³ · unavailable in current USB driver", state="disabled"
         ).pack(anchor="w", pady=8)
@@ -317,6 +328,8 @@ class ThermalApp:
         )
         self.clahe_switch.state(["disabled"] if custom else ["!disabled"])
         self.dde_switch.state(["disabled"] if custom else ["!disabled"])
+        self.dde_slider.state(["disabled"] if custom else ["!disabled"])
+        self.dde_caption.set(f"DDE strength: {self.dde_strength.get():.2f}")
         self.settings = DisplaySettings(
             self.mode.get(),
             self.palette.get(),
@@ -326,8 +339,10 @@ class ThermalApp:
             self.alpha.get(),
             self.detail.get(),
             self.clahe.get(),
+            self.dde_strength.get(),
         )
         self.processor.reset()
+        self._render_key = None
         self.render()
 
     def connect(self):
@@ -428,7 +443,13 @@ class ThermalApp:
                 unit,
             )
             if limits
-            else (legend_colors(self.settings), 0.0, 255.0, "Brightness")
+            else (
+                legend_colors(self.settings),
+                0.0,
+                255.0,
+                "°C min/max",
+                self.processor.temperature_bands,
+            )
         )
         self.canvas.set_frame(
             orient(rgb, self.rotation, self.mirror),
@@ -443,7 +464,7 @@ class ThermalApp:
         self.legend.set(
             f"Palette range: {limits[0]:.6f} → {limits[1]:.6f} {unit}"
             if limits
-            else "Brightness / enhanced contrast · colors have no linear temperature scale"
+            else "Legend: observed °C min/max in each color band; local contrast can make ranges overlap."
         )
 
     def pixel(self, sample):
@@ -592,6 +613,7 @@ class ThermalApp:
         self.alpha.set(restored.alpha)
         self.clahe.set(restored.clahe)
         self.detail.set(restored.detail)
+        self.dde_strength.set(restored.dde_strength)
         self.canvas.auto_fit = True
         self.pause_button.configure(text="Return to live")
         self._render_key = None

@@ -37,6 +37,14 @@ def test_desktop_zoom_sources_and_shutdown():
             app.mode.set(mode)
             app.update_settings()
             root.update()
+        app.clahe.set(True)
+        app.update_settings()
+        assert app.canvas.legend_data[3] == "°C min/max"
+        assert len(app.canvas.legend_data[4]) == 5
+        app.detail.set(True)
+        app.dde_strength.set(3.0)
+        app.update_settings()
+        assert app.settings.dde_strength == 3.0
         app.canvas.inspect()
         root.update()
         labels = [

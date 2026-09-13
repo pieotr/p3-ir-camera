@@ -89,7 +89,8 @@ def append_legend(image, legend):
     """Append an RGB-palette legend to a BGR presentation image, keeping RAW untouched."""
     import cv2
 
-    colors, low, high, unit = legend
+    colors, low, high, unit = legend[:4]
+    bands = legend[4] if len(legend) > 4 else None
     h, w = image.shape[:2]
     height = max(h, 160)
     output = np.full((height, w + 140, 3), (29, 21, 16), np.uint8)
@@ -110,12 +111,16 @@ def append_legend(image, legend):
         1,
         cv2.LINE_AA,
     )
-    for fraction in (0, 0.25, 0.5, 0.75, 1):
+    for index, fraction in enumerate((0, 0.25, 0.5, 0.75, 1)):
         value = high + (low - high) * fraction
         y = int(30 + (height - 50) * fraction)
+        label = f"{value:.2f}"
+        if bands is not None:
+            bounds = bands[index]
+            label = "--" if bounds is None else f"{bounds[0]:.1f}/{bounds[1]:.1f}"
         cv2.putText(
             output,
-            f"{value:.2f}",
+            label,
             (w + 37, min(height - 5, y + 4)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -143,6 +148,7 @@ def snapshot_display_settings(metadata):
         "alpha",
         "detail",
         "clahe",
+        "dde_strength",
     ):
         if field in data:
             setattr(settings, field, data[field])
@@ -155,13 +161,22 @@ def snapshot_display_settings(metadata):
         raise ValueError("Invalid snapshot display mode")
     if not isinstance(settings.palette, str):
         raise ValueError("Invalid snapshot palette name")
-    numbers = (settings.minimum, settings.maximum, settings.alpha)
+    numbers = (
+        settings.minimum,
+        settings.maximum,
+        settings.alpha,
+        settings.dde_strength,
+    )
     if any(
         isinstance(n, bool) or not isinstance(n, (int, float)) or not np.isfinite(n)
         for n in numbers
     ):
         raise ValueError("Invalid display range or filter weight")
-    if settings.maximum <= settings.minimum or not 0.05 <= settings.alpha <= 1:
+    if (
+        settings.maximum <= settings.minimum
+        or not 0.05 <= settings.alpha <= 1
+        or not 0 <= settings.dde_strength <= 4
+    ):
         raise ValueError("Invalid display range or filter weight")
     if not isinstance(settings.detail, bool) or not isinstance(settings.clahe, bool):
         raise ValueError("Enhancement flags must be booleans")
