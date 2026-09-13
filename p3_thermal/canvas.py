@@ -1,5 +1,7 @@
 """Thermal canvas with sensor-coordinate picking and temperature pixel labels."""
 
+from collections.abc import Callable
+
 import tkinter as tk
 
 import cv2
@@ -16,6 +18,14 @@ class ThermalCanvas(tk.Canvas):
         self.on_pixel, self.on_zoom = on_pixel, on_zoom
         self.rgb = self.raw = self.coordinates = None
         self.pixel_scale = 3.0
+        self.tool = "Pan"
+        self.on_gesture: Callable | None = None
+        self.regions = []
+        self.measurements: np.ndarray | None = None
+        self.native_measurements: np.ndarray | None = None
+        self.corrected = False
+        self.gesture_start = None
+        self.gesture_last = None
         self.offset = [0.0, 0.0]
         self.auto_fit = True
         self.markers = True
@@ -37,6 +47,7 @@ class ThermalCanvas(tk.Canvas):
         self.bind("<Button-5>", lambda e: self.zoom(0.8, e.x, e.y))
         self.bind("<ButtonPress-1>", self.start_pan)
         self.bind("<B1-Motion>", self.pan)
+        self.bind("<ButtonRelease-1>", self.finish_gesture)
         self.bind("<Double-Button-1>", lambda e: self.fit())
 
     def set_frame(self, rgb, raw, coordinates):
@@ -88,15 +99,58 @@ class ThermalCanvas(tk.Canvas):
         """Ctrl+X selects a legible native-pixel inspection magnification."""
         self.zoom(128 / self.pixel_scale)
 
+    def sensor_at(self, x, y):
+        if self.raw is None or self.coordinates is None:
+            return None
+        if self.legend_rect is not None:
+            left, top, right, bottom = self.legend_rect
+            if left <= x <= right and top <= y <= bottom:
+                return None
+        col, row = (
+            int(np.floor((x - self.offset[0]) / self.pixel_scale)),
+            int(np.floor((y - self.offset[1]) / self.pixel_scale)),
+        )
+        if 0 <= row < self.raw.shape[0] and 0 <= col < self.raw.shape[1]:
+            sy, sx = self.coordinates[row, col]
+            return int(sx), int(sy)
+        return None
+
     def start_pan(self, event):
+        if self.tool != "Pan":
+            self.gesture_start = self.gesture_last = self.sensor_at(event.x, event.y)
+            if self.gesture_start is not None and self.on_gesture:
+                self.on_gesture(
+                    "begin", self.tool, self.gesture_start, self.gesture_start
+                )
+            return
         self.drag = (event.x, event.y, *self.offset)
 
     def pan(self, event):
+        if self.tool != "Pan":
+            point = self.sensor_at(event.x, event.y)
+            if point is not None and self.gesture_start is not None:
+                if self.on_gesture:
+                    self.on_gesture("move", self.tool, self.gesture_last, point)
+                self.gesture_last = point
+                self.redraw()
+            return
         self.auto_fit = False
         x, y, ox, oy = self.drag
         self.offset = [ox + event.x - x, oy + event.y - y]
         self.redraw()
         self.hover(event)
+
+    def finish_gesture(self, event):
+        if self.tool != "Pan" and self.gesture_start is not None and self.on_gesture:
+            point = self.sensor_at(event.x, event.y) or self.gesture_last
+            start = (
+                self.gesture_last
+                if self.tool in ("Brush", "Eraser")
+                else self.gesture_start
+            )
+            self.on_gesture("end", self.tool, start, point)
+        self.gesture_start = self.gesture_last = None
+        self.redraw()
 
     def hover(self, event):
         self.pick(event.x, event.y)
@@ -191,6 +245,8 @@ class ThermalCanvas(tk.Canvas):
                             oy + (row + 0.5) * self.pixel_scale,
                         )
                         label = pixel_label(self.raw[row, col]).replace(" °C", "\n°C")
+                        if self.corrected and self.measurements is not None:
+                            label = f"{self.measurements[row, col]:.3f}\n°C corrected"
                         self.create_text(
                             x + 1,
                             y + 1,
@@ -205,10 +261,11 @@ class ThermalCanvas(tk.Canvas):
                             fill="white",
                             font=("TkDefaultFont", 9, "bold"),
                         )
-        if self.markers:
+        spot_data = self.measurements if self.measurements is not None else self.raw
+        if self.markers and np.isfinite(spot_data).any():
             for index, color, label in [
-                (np.argmin(self.raw), "#64c9ff", "MIN"),
-                (np.argmax(self.raw), "#ff7d7d", "MAX"),
+                (np.nanargmin(spot_data), "#64c9ff", "MIN"),
+                (np.nanargmax(spot_data), "#ff7d7d", "MAX"),
             ]:
                 row, col = np.unravel_index(index, self.raw.shape)
                 x, y = (
@@ -219,6 +276,8 @@ class ThermalCanvas(tk.Canvas):
                 self.create_line(x, y - 7, x, y + 7, fill=color, width=2)
                 self.create_text(x + 10, y - 10, text=label, fill=color, anchor="w")
 
+        self.draw_regions()
+        self.draw_preview()
         self.draw_legend()
 
     def draw_legend(self):
@@ -265,3 +324,98 @@ class ThermalCanvas(tk.Canvas):
                 fill="white",
                 font=("TkDefaultFont", 9),
             )
+
+    def screen_point(self, point):
+        if self.coordinates is None:
+            return None
+        x, y = point
+        matches = np.argwhere(
+            (self.coordinates[..., 0] == y) & (self.coordinates[..., 1] == x)
+        )
+        if not len(matches):
+            return None
+        row, col = matches[0]
+        return (
+            self.offset[0] + (col + 0.5) * self.pixel_scale,
+            self.offset[1] + (row + 0.5) * self.pixel_scale,
+        )
+
+    def draw_preview(self):
+        """Draw provisional geometry using the same sensor transform as saved ROIs."""
+        if self.gesture_start is None or self.gesture_last is None:
+            return
+        a, b = (
+            self.screen_point(self.gesture_start),
+            self.screen_point(self.gesture_last),
+        )
+        if a is None or b is None:
+            return
+        x, y = a
+        u, v = b
+        if self.tool == "Line":
+            self.create_line(
+                x, y, u, v, fill="#ffffff", width=3, dash=(6, 4), tags="roi_preview"
+            )
+        elif self.tool == "Rectangle":
+            self.create_rectangle(
+                x, y, u, v, outline="#ffffff", width=3, dash=(6, 4), tags="roi_preview"
+            )
+        elif self.tool == "Circle":
+            radius = np.hypot(u - x, v - y)
+            self.create_oval(
+                x - radius,
+                y - radius,
+                x + radius,
+                y + radius,
+                outline="#ffffff",
+                width=3,
+                dash=(6, 4),
+                tags="roi_preview",
+            )
+
+    def draw_regions(self):
+        if self.coordinates is None:
+            return
+        for region in self.regions:
+            a, b = self.screen_point(region.start), self.screen_point(region.end)
+            if a is None or b is None:
+                continue
+            x, y = a
+            u, v = b
+            color = "#77ffcc"
+            if region.kind == "Spot":
+                self.create_line(x - 6, y, x + 6, y, fill=color, width=2)
+                self.create_line(x, y - 6, x, y + 6, fill=color, width=2)
+            elif region.kind == "Rectangle":
+                self.create_rectangle(x, y, u, v, outline=color, width=2)
+            elif region.kind == "Circle":
+                radius = np.hypot(u - x, v - y)
+                self.create_oval(
+                    x - radius,
+                    y - radius,
+                    x + radius,
+                    y + radius,
+                    outline=color,
+                    width=2,
+                )
+            elif region.kind == "Line":
+                self.create_line(x, y, u, v, fill=color, width=2)
+            label = region.name
+            if region.kind == "Spot" and self.native_measurements is not None:
+                sx, sy = region.start
+                label += f" {self.native_measurements[sy, sx]:.3f} °C"
+            self.create_text(x + 8, y - 12, text=label, fill=color, anchor="w")
+            if region.kind != "Spot" and self.native_measurements is not None:
+                ys, xs = region.samples(self.native_measurements.shape)
+                values = self.native_measurements[ys, xs]
+                if np.isfinite(values).any():
+                    for index, fill in (
+                        (np.nanargmin(values), "#64c9ff"),
+                        (np.nanargmax(values), "#ff7d7d"),
+                    ):
+                        point = self.screen_point((xs[index], ys[index]))
+                        if point:
+                            px, py = point
+                            self.create_oval(
+                                px - 3, py - 3, px + 3, py + 3, outline=fill, width=2
+                            )

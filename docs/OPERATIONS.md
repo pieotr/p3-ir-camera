@@ -67,7 +67,7 @@ Dalsza lista kontroli sprzętowej (P1 i pozostałe systemy nie zostały sprawdzo
 6. Zamknij podczas startu i po nieudanej inicjalizacji. Nie powinien pozostawać proces posiadający USB.
 7. Sprawdź eksport NPZ oraz działanie P1 i P3 osobno. Windows/macOS wymagają odrębnego sprawdzenia.
 
-Lock-in, pomiar dokładności absolutnej, korekcja środowiskowa, bezstratne nagrywanie ciągłe i X³ nie są funkcjami zweryfikowanymi lub zaimplementowanymi w tym wydaniu.
+Lock-in i X³ pozostają niezaimplementowane. Korekcja środowiskowa ma status eksperymentalny, a nagrywanie raportuje odrzucenia przy przeciążeniu. Dokładność absolutna korekcji i długie nagrania na sprzęcie nie zostały zweryfikowane.
 
 
 ## Zapis obrazów
@@ -83,7 +83,7 @@ Opcja **Include legend** dołącza pasek po prawej stronie JPEG/kolorowego PNG; 
 
 ## Import zamrożonej klatki
 
-Open RAW przyjmuje NPZ zapisane przez nowy viewer i wcześniejsze NPZ z tablicami `raw`, `brightness` oraz opcjonalnymi metadanymi. Samotne pliki NPY i PNG RAW nie są obecnie importowane: nie zawierają całej pary kanałów. Import weryfikuje typy, rozmiar, jednostkę i ustawienia; nie używa pickle. Limit rozpakowanej zawartości wynosi 32 MB.
+Open RAW przyjmuje NPZ zapisane przez nowy viewer i wcześniejsze NPZ z tablicami `raw`, `brightness` oraz opcjonalnymi metadanymi. Open RAW przyjmuje również samodzielne NPY uint16 i natywne 16-bitowe PNG RAW. Nie zawierają kanału fabrycznej jasności ani metadanych; Factory brightness jest dla nich niedostępne. Import weryfikuje typy, rozmiar, jednostkę i ustawienia; nie używa pickle. Limit rozpakowanej zawartości wynosi 32 MB.
 
 Przywracane są zapisane ustawienia obrazu i orientacja. Paleta niestandardowa zapisana w NPZ jest dodawana do biblioteki; konflikt z istniejącą, inną paletą otrzymuje nową nazwę. Fabryczne palety nie są nadpisywane. Zapisane klatki wersji 1 z połączonym `detail` odtwarzają oba filtry CLAHE/DDE. Wersja 2 zapisuje je osobno.
 
@@ -114,3 +114,6 @@ Biblioteka znajduje się w `$XDG_CONFIG_HOME/p3-thermal-studio/palettes.json`, a
 W Filters zaznacz DDE i ustaw DDE strength (0–4, domyślnie 1.5). DDE wyostrza krawędzie, więc na gładkiej powierzchni efekt może być niewielki. Duże wartości mogą uwydatnić szum i obwódki. Porównuj na zamrożonej klatce, przełączając DDE przy stałej palecie i zakresie. CLAHE ma osobny przełącznik.
 
 Przy CLAHE/DDE oraz Factory brightness pasek jest opisany `°C min/max`. Przy każdym z pięciu pasm podaje dwie liczby: najniższą i najwyższą temperaturę RAW pikseli, które trafiły do tego pasma w wyświetlanej klatce. Kreska oznacza brak takich pikseli. Nie jest to jednoznaczna kalibracja koloru: zakresy mogą się pokrywać lub zmieniać kolejność. Dokładny odczyt konkretnego piksela pozostaje pod obrazem. Eksportowana legenda przedstawia te same zakresy, zapisane jako min/max obok paska.
+
+
+Pełna instrukcja ROI, profili, izoterm, warstw emisyjności i nagrywania jest w [ANALYSIS.md](ANALYSIS.md).

@@ -12,6 +12,7 @@ class PalettePanel(ttk.Frame):
 
     def __init__(self, parent, library, on_change):
         super().__init__(parent, padding=12)
+        self.host = parent
         self.library, self.on_change = library, on_change
         self.selected = tk.StringVar()
         ttk.Label(self, text="User temperature palettes").pack(anchor="w")
@@ -58,9 +59,7 @@ class PalettePanel(ttk.Frame):
             self.edit(palette)
 
     def edit(self, palette=None):
-        dialog = tk.Toplevel(self)
-        dialog.title("Temperature palette")
-        dialog.transient(self.winfo_toplevel())
+        dialog = self.host.editor("Palette editor")
         box = ttk.Frame(dialog, padding=16)
         box.pack(fill="both", expand=True)
         name = tk.StringVar(value=palette.name if palette else "My palette")
@@ -170,7 +169,7 @@ class PalettePanel(ttk.Frame):
                 self.refresh()
                 self.selected.set(result.name)
                 self.on_change(result.name)
-                dialog.destroy()
+                self.host.select("Palettes")
             except (ValueError, OSError) as exc:
                 messagebox.showerror("Cannot save palette", str(exc), parent=dialog)
 

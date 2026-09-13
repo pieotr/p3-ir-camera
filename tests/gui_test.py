@@ -1,5 +1,6 @@
 """Opt-in real Tk smoke test: P3_GUI_TEST=1 python -m pytest tests/gui_test.py."""
 
+import contextlib
 import os
 import time
 
@@ -219,3 +220,105 @@ def test_imported_frame_survives_live_frames_and_disconnect(monkeypatch, tmp_pat
         assert not errors
     finally:
         app.close()
+
+
+def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import tkinter as tk
+
+    import numpy as np
+
+    from p3_thermal.app import ThermalApp
+    from p3_thermal.export import load_snapshot
+
+    root = tk.Tk()
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(args)
+    app = ThermalApp(root, demo=True)
+
+    def pump(seconds=0.1):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            root.update()
+            time.sleep(0.01)
+
+    try:
+        pump(0.2)
+        assert app.frame is not None
+        app.open_workspace()
+        panel = app.workspace
+        app.pause()
+        app.rotate()
+        app.flip()
+        panel.set_tool("Line")
+        a, b = app.canvas.screen_point((20, 20)), app.canvas.screen_point((30, 30))
+        app.canvas.start_pan(SimpleNamespace(x=a[0], y=a[1]))
+        app.canvas.pan(SimpleNamespace(x=b[0], y=b[1]))
+        assert app.canvas.find_withtag("roi_preview")
+        app.canvas.finish_gesture(SimpleNamespace(x=b[0], y=b[1]))
+        assert not app.canvas.find_withtag("roi_preview")
+        assert app.analysis.regions[0].start == (20, 20)
+        assert app.analysis.regions[0].end == (30, 30)
+        panel.rois.selection_set("0")
+        panel.line_profile()
+        pump(0.1)
+        panel.add_layer()
+        panel.set_tool("Brush")
+        panel.gesture("begin", "Brush", (25, 25), (25, 25))
+        panel.gesture("move", "Brush", (25, 25), (28, 25))
+        assert app.analysis.layers[0].mask[25, 26]
+        panel.undo_stroke()
+        assert not app.analysis.layers[0].mask.any()
+        panel.gesture("begin", "Brush", (25, 25), (25, 25))
+        panel.enabled.set(True)
+        panel.params["emissivity"].set("0.8")
+        panel.apply_radiometry()
+        assert app.analysis.radiometry.enabled
+        assert not np.array_equal(app.measured, app.frame.raw / 64 - 273.15)
+        panel.iso_enabled.set(True)
+        panel.iso_min.set("-100")
+        panel.iso_max.set("1000")
+        panel.apply_isotherm()
+        assert app.analysis.isotherm
+        project = tmp_path / "project.npz"
+        monkeypatch.setattr(
+            "p3_thermal.app.filedialog.asksaveasfilename", lambda **kw: str(project)
+        )
+        app.export()
+        frame, metadata = load_snapshot(project)
+        assert "analysis" in metadata
+        np.testing.assert_array_equal(frame.raw, app.frame.raw)
+        sequence = tmp_path / "recording.p3v"
+        monkeypatch.setattr(
+            "p3_thermal.analysis_ui.filedialog.asksaveasfilename",
+            lambda **kw: str(sequence),
+        )
+        panel.start_recording()
+        pump(0.3)
+        panel.stop_recording()
+        app.recorder.join(3)
+        assert app.recorder.written >= 2 and app.recorder.error is None
+        monkeypatch.setattr(
+            "p3_thermal.analysis_ui.filedialog.askopenfilename",
+            lambda **kw: str(sequence),
+        )
+        pump(0.15)
+        assert app.sidebar.selection.get() == "Video"
+        assert app.offline and panel.sequence is not None
+        panel.step(1)
+        assert panel.position.get() == 1
+        app.palette.set("White hot")
+        app.update_settings()
+        panel.play()
+        pump(0.4)
+        panel.stop_playback()
+        assert not errors
+    finally:
+        app.close()
+        end = time.monotonic() + 3
+        while app.worker.is_alive() and time.monotonic() < end:
+            root.update()
+            time.sleep(0.01)
+        with contextlib.suppress(tk.TclError):
+            root.update()

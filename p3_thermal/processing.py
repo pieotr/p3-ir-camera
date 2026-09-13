@@ -59,10 +59,10 @@ class Processor:
         self.bounds = None
         self.temperature_bands = None
 
-    def render(self, raw, brightness, settings, custom_palette=None):
+    def render(self, raw, brightness, settings, custom_palette=None, measured=None):
         """Return RGB sensor-sized image and actual display limits (or None)."""
         self.temperature_bands = None
-        data = temperature(raw)
+        data = temperature(raw) if measured is None else measured
         if settings.mode == "Filtered temperature":
             self.previous = (
                 data.copy()
@@ -72,7 +72,7 @@ class Processor:
             data = self.previous
         if custom_palette is not None:
             # Absolute temperature stops must never be distorted by AGC/CLAHE/DDE.
-            return custom_palette.colorize(data), (
+            return custom_palette.colorize(np.nan_to_num(data)), (
                 custom_palette.stops[0][0],
                 custom_palette.stops[-1][0],
             )
@@ -87,14 +87,18 @@ class Processor:
                 if high <= low:
                     raise ValueError("Maximum must be greater than minimum")
             else:
-                low, high = np.percentile(data, (1, 99))
+                low, high = (
+                    np.nanpercentile(data, (1, 99))
+                    if np.isfinite(data).any()
+                    else (0.0, 1.0)
+                )
                 if self.bounds is not None:
                     low, high = 0.15 * np.array([low, high]) + 0.85 * self.bounds
                 self.bounds = np.array([low, high])
             limits = (float(low), float(high))
-            gray = (np.clip((data - low) / max(high - low, 1e-9), 0, 1) * 255).astype(
-                np.uint8
-            )
+            gray = (
+                np.nan_to_num(np.clip((data - low) / max(high - low, 1e-9), 0, 1)) * 255
+            ).astype(np.uint8)
         if settings.clahe:
             gray = cv2.createCLAHE(2.0, (8, 8)).apply(gray)
             limits = None
@@ -108,7 +112,7 @@ class Processor:
             )
             limits = None  # nonlinear enhancement invalidates a quantitative legend
         if limits is None:
-            self.temperature_bands = observed_temperature_bands(raw, gray)
+            self.temperature_bands = observed_temperature_bands(raw, gray, measured)
         if settings.palette in ("White hot", "Black hot"):
             if settings.palette == "Black hot":
                 gray = 255 - gray
@@ -136,7 +140,7 @@ def legend_colors(settings, custom_palette=None):
     ).reshape(256, 3)
 
 
-def observed_temperature_bands(raw, gray):
+def observed_temperature_bands(raw, gray, measured=None):
     """Observed Celsius min/max per displayed color band, ordered high intensity first.
 
     A local contrast operator has no unique inverse temperature curve. These ranges
@@ -144,10 +148,10 @@ def observed_temperature_bands(raw, gray):
     Empty bands are explicitly marked; values need not be monotonic.
     """
     bins = np.digitize(gray, [32, 96, 160, 224])
-    temps = temperature(raw)
+    temps = temperature(raw) if measured is None else measured
     result = []
     for band in range(4, -1, -1):
-        values = temps[bins == band]
+        values = temps[(bins == band) & np.isfinite(temps)]
         result.append(
             (float(values.min()), float(values.max())) if values.size else None
         )

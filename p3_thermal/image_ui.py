@@ -9,11 +9,9 @@ import cv2
 from .export import save_image
 
 
-def image_dialog(parent, frame, rgb, on_saved, legend=None):
+def image_dialog(parent, frame, rgb, on_saved, legend=None, host=None):
     """Capture frame/RGB when opening the dialog, so a live feed cannot change the export."""
-    dialog = tk.Toplevel(parent)
-    dialog.title("Save image")
-    dialog.transient(parent)
+    dialog = host.editor("Save image") if host is not None else ttk.Frame(parent)
     box = ttk.Frame(dialog, padding=18)
     box.pack(fill="both", expand=True)
     kind = tk.StringVar(value="jpeg")
@@ -69,7 +67,8 @@ def image_dialog(parent, frame, rgb, on_saved, legend=None):
                 legend if include_legend.get() else None,
             )
             on_saved(path)
-            dialog.destroy()
+            if host is not None:
+                host.select("View")
         except (ValueError, OSError, cv2.error) as exc:
             messagebox.showerror("Save failed", str(exc), parent=dialog)
 

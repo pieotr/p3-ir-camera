@@ -1,109 +1,97 @@
 # P3 Thermal Studio
 
-Modułowa aplikacja desktopowa do kamer termowizyjnych **P3 (256 × 192)** i **P1 (160 × 120)**. Nowy viewer zastępuje demonstracyjne okno OpenCV interfejsem Tk/ttk: panel ustawień, niezależny od USB interfejs, inspekcja pikseli i bezstratny eksport.
+A modular desktop application for **P3 (256 × 192)** and **P1 (160 × 120)** thermal cameras. The Tk/ttk interface combines live viewing, native pixel measurements, RAW editing and radiometric sequences in one window. The interface and current documentation are in English.
 
-## Uruchomienie
+## Installation
 
 ```bash
 pip install -e .
-p3-viewer                 # P3
-p3-viewer --model p1      # P1
-p3-viewer --demo          # syntetyczne dane, bez kamery
+p3-viewer                  # P3 camera
+p3-viewer --model p1       # P1 camera
+p3-viewer --demo           # Synthetic frames, no camera required
 python p3_viewer.py --demo
 ```
 
-Wymagany Python ≥ 3.10, NumPy, OpenCV, PyUSB i **Tk 8.6+**. Tk jest składnikiem instalacji Pythona, nie pakietem pip. W Debianie/Ubuntu zapewnia go `python3-tk`, w Arch Linux `tk`; środowisko wirtualne musi korzystać z Pythona z obsługą Tk. Sesja graficzna jest wymagana; aplikacja nie korzysta z backendu Qt biblioteki OpenCV. Pozostałe zależności historyczne pozostają w projekcie na potrzeby eksperymentów.
+Python ≥ 3.10 and Tk 8.6+ are required. Project installation supplies Python dependencies, including NumPy, OpenCV, PyUSB and Matplotlib. Tk is a system component: install `python3-tk` on Debian/Ubuntu or `tk` on Arch, and use a Python interpreter built with Tk support. A graphical desktop session is required. OpenCV's Qt viewer is not used.
 
-### Dostęp USB
-
-Linux: utwórz `/etc/udev/rules.d/99-p3-ir.rules`:
+On Linux, put these rules in `/etc/udev/rules.d/99-p3-ir.rules`:
 
 ```udev
 SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45c2", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", TAG+="uaccess"
 ```
 
-Przeładuj reguły (`sudo udevadm control --reload-rules`), odłącz i podłącz kamerę. Reguły udostępniają urządzenie aktywnej lokalnej sesji. Windows wymaga backendu libusb/WinUSB; wcześniejsza konfiguracja używała Zadig dla urządzenia o VID `3474` i PID `45C2` lub `45A2`. Obsługa sprzętu na Windows/macOS wymaga osobnego sprawdzenia.
+Reload using `sudo udevadm control --reload-rules`, then reconnect the camera. These rules grant access to the active local desktop session. Windows requires a libusb/WinUSB backend; previous setups used Zadig with VID `3474`, PID `45C2` or `45A2`. P1 and Windows/macOS hardware operation need separate verification.
 
-## Temperatura konkretnego piksela
+## Workspace
 
-Pod obrazem, **po lewej**, są dwa oddzielne wiersze: powiększenie oraz `Pixel (x, y) / temperatura °C / RAW`. Współrzędne są zerowane od lewego górnego rogu oryginalnego sensora i pozostają poprawne po obrocie, odbiciu oraz przesunięciu obrazu.
+The thermal image stays on the left. Select a section at the top of the **right sidebar**: View, Filters, Sensor, Palettes, Measurements, RAW editing or Video. Drag the divider to resize the sidebar. Analysis, palette editing, image export options and plots use this same window. File and color pickers remain native dialogs.
 
-Dane kamery mają postać `uint16`, a konwersja wynosi:
+Use the wheel or on-screen +/− buttons to zoom, and Pan or the arrow buttons to move the image. Fit restores the full frame; Pixels enables detailed inspection. Under the image, the left readout shows native sensor coordinates, temperature and RAW counts. Rotation, mirroring and zoom do not alter measurements.
+
+| Source | Meaning |
+| --- | --- |
+| Temperature | Native sensor values converted to °C; optional radiometric correction applies when enabled. |
+| Filtered temperature | Temporal EMA smoothing of the displayed temperature image; cursor measurements remain current. |
+| Raw counts | Original 16-bit thermal codes, displayed with a RAW-unit scale. |
+| Factory brightness | Separate 8-bit image processed by the camera; intensity is not a linear temperature scale. |
 
 ```text
-°C = RAW / 64 − 273.15
-krok kodowania = 0.015625 K
-przykład: RAW 19000 → 23.725000 °C
+Temperature °C = RAW / 64 − 273.15
+Encoding step = 0.015625 K
+RAW 19000 → 23.725000 °C
 ```
 
-Odczyty mają **6 miejsc po przecinku**, co zachowuje pełną rozdzielczość tego kodowania. To precyzja zapisu danych, nie deklaracja dokładności pomiarowej sensora. Pomiary nie są wyprowadzane z RGB, interpolacji ani klatek po filtracji. Pokazywana jest temperatura pozorna dostarczana przez kamerę, bez dodatkowej programowej korekcji emisyjności.
+The six decimal places preserve all values in this encoding; they do not claim six-decimal sensor accuracy. Measurements never come from RGB or interpolated export images. Optional corrections are labeled as estimates and retain the original reading.
 
-**Ctrl+X** ustawia powiększenie 12800%, z siatką i temperaturą każdego widocznego piksela. Siatka zaczyna się przy 2800%, pełne etykiety przy 9600%, maksimum to 25600%. Przy mniejszej komórce pełny odczyt pozostaje pod obrazem. Wbudowany inspektor RGB OpenCV został całkowicie usunięty.
+## Display and analysis
 
-## Funkcje
+- Factory palettes: Inferno, Magma, Viridis, Turbo, Rainbow, White hot and Black hot.
+- Auto percentile adapts the display range using percentiles 1–99; Fixed uses a specified temperature range after Apply range.
+- CLAHE improves local contrast. DDE independently sharpens edges with strength 0–4; zero has no effect, and smooth areas may change little.
+- The image legend runs from maximum at the top to minimum at the bottom. With CLAHE, DDE or Factory brightness, five color bands report observed temperature min/max, because local processing has no unique inverse temperature scale.
+- Custom palettes define absolute temperature/color stops with linear gradients or discrete bands. JSON presets persist between sessions; factory palettes cannot be overwritten or removed. Absolute palettes bypass CLAHE, DDE and automatic scaling to preserve their temperature thresholds.
+- Measurements provides spots, rectangles, circles and lines, with live drag previews, minimum/maximum/mean, line profiles, CSV export and isotherms.
+- RAW editing provides experimental emissivity and environmental correction, including painted material layers with an eraser and undo.
+- Video records native radiometric frames to `.p3v`. After Stop recording drains the writer queue successfully, the completed sequence opens automatically for analysis. Empty or failed recordings do not replace the current image.
 
-| Element | Działanie |
+Freeze stops display updates without stopping acquisition. Open RAW loads NPZ, native 16-bit PNG or uint16 NPY; imported frames remain editable and can be recolored and exported. Return to live resumes camera viewing. Save data preserves RAW and analysis settings in NPZ. Save image offers smooth JPEG, native RAW PNG or color PNG, with an optional legend for color images.
+
+## Camera behavior and limitations
+
+Unplugging the camera **does not close the application**. The live view displays a disconnected status and retries every two seconds after cleanup. Reconnecting resumes viewing; imported offline frames remain visible during USB failures. Reconnect expedites a pending attempt. Closing waits for acquisition and recording cleanup.
+
+Use **HIGH** for measurements. On the previously tested P3 firmware `00.00.02.18`, LOW produced roughly −34°C for a scene reading about 20–25°C in HIGH; shutter calibration did not remove the difference. LOW remains experimental, without an invented offset. AUTO gain is unsupported.
+
+**X³ remains disabled:** no verified camera command or implementation is available in this driver. JPEG enlargement does not implement the camera's resolution enhancement. Lock-in remains a separate, untested historical experiment.
+
+Radiometric correction is an experimental broad-band model, not calibrated P3 spectral inversion. It cannot guarantee accurate correction of solar reflections. Recording FPS samples arriving frames; it does not change sensor timing or synthesize measurements.
+
+## Shortcuts
+
+| Action | Shortcut |
 | --- | --- |
-| Temperature | Obraz z bieżącej, nieprzetworzonej temperatury |
-| Filtered temperature | Wygładzanie czasowe EMA wyłącznie obrazu; regulowany udział nowej klatki |
-| Raw counts | Wizualizacja 16-bitowych kodów, zakres w jednostkach RAW |
-| Factory brightness | 8-bitowy obraz jasności z kamery; kolory nie oznaczają liniowej skali °C |
-| Palette | Inferno, Magma, Viridis, Turbo, Rainbow, White hot, Black hot |
-| Auto percentile | Percentyle 1–99 z płynną adaptacją zakresu |
-| Fixed | Własny zakres °C; wymaga Apply range i maksimum większego od minimum |
-| CLAHE / DDE | Osobne przełączniki lokalnego kontrastu i wyostrzania w zakładce Filters; siła DDE 0–4 |
-| Legend | Pasek aktualnej skali na obrazie: maksimum u góry, minimum u dołu |
-| Palettes | Edycja własnych punktów °C/kolor, import i eksport JSON, trwała biblioteka |
-| Freeze / Resume | Zatrzymuje wyświetlaną klatkę; kamera nadal jest odczytywana |
-| Shutter / NUC | Kalibracja migawką wykonywana przez wątek USB |
-| Sensor gain | HIGH; LOW dostępny eksperymentalnie, z wykrytym przesunięciem temperatur na firmware 00.00.02.18; AUTO nie jest zaimplementowane |
-| Reconnect | Natychmiastowa próba połączenia; bez kamery aplikacja ponawia próby automatycznie co 2 s |
-| Save data | NPZ z oryginalnym RAW, jasnością i metadanymi |
-| Save image | Wygładzony JPEG, natywny 16-bitowy PNG RAW lub kolorowy PNG; opcjonalna legenda |
-| Open RAW | Wczytanie NPZ do analizy zamrożonej klatki; Return to live wraca do kamery |
+| Pixel inspection at 12800% | Ctrl+X |
+| Save thermal data | Ctrl+S |
+| Fit image | Escape or double click |
+| Zoom | + / − or mouse wheel |
 
-Min/max i średnia dotyczą całej oryginalnej klatki, również podczas zoomu. W trybie demo wszystkie dane są syntetyczne, a sterowanie sensorem jest niedostępne. **Do pomiarów używaj HIGH**: test fizycznej P3 wykazał w LOW odczyty około −34°C zamiast zakresu około 20–25°C tej samej sceny. NUC nie usunęło różnicy; nie dodano arbitralnej korekcji temperatur.
+Pixel grid lines appear at 2800%, full temperature labels at 9600%, and zoom is limited to 25600%. The cursor readout remains available at every scale.
 
-### Nawigacja
+## Documentation and development
 
-- Kółko myszy lub `+` / `−`: powiększanie; kółko zachowuje punkt pod kursorem.
-- Przeciąganie lewym przyciskiem lub ekranowe strzałki: przesunięcie obrazu. Przyciski `+`/`−`, Fit i Pixels są pod obrazem.
-- Dwuklik lub `Escape`: dopasowanie obrazu do okna.
-- `Ctrl+X`: inspekcja temperatur pikseli.
-- `Ctrl+S`: zapis danych termicznych.
-- Obrót i odbicie: przyciski w panelu bocznym.
-- Zamknięcie przez X: zatrzymanie wątku, strumienia i zwolnienie USB; działa także po odłączeniu kamery.
-
-Po odłączeniu kamery **okno pozostaje otwarte**, a obraz zastępuje komunikat o braku kamery. Aplikacja czeka na ponowne podłączenie i automatycznie wznawia podgląd po inicjalizacji. Działa to również przy uruchomieniu bez kamery. Wznowienie wyłącza Freeze; ustawienia obrazu pozostają zachowane. X zamyka aplikację także podczas oczekiwania.
-
-Stare jednoliterowe skróty demonstracyjnego viewera zastępują widoczne kontrolki. Historyczne opcje lock-in nie są przyjmowane przez nowe CLI.
-
-## Analiza zapisanych klatek i własne kolory
-
-**Save data → NPZ** zachowuje pełne RAW, fabryczną jasność, ustawienia i definicję użytej własnej palety. **Open RAW** otwiera plik jako zamrożoną klatkę. Możesz nadal odczytywać temperatury pikseli, zmieniać palety, CLAHE/DDE, obrót i zoom oraz eksportować JPG/PNG/NPZ. Przychodzące klatki USB nie zastąpią importowanej klatki. Do podglądu kamery wracasz przez **Return to live**.
-
-Zakładka **Palettes → New** pozwala zdefiniować punkty temperatury i kolory (np. 15°C: niebieski, 25°C: zielony, 50°C: czerwony). `linear` tworzy gradient, `steps` — pasma. Presety można edytować, eksportować i importować jako JSON. Aplikacja pamięta je w lokalnej bibliotece; usuwać i nadpisywać można tylko palety użytkownika. Palety o bezwzględnych progach °C pomijają AGC, CLAHE i DDE, aby nie zmieniać znaczenia przypisanych kolorów.
-
-**Temperature** mapuje 16-bitowe odczyty temperatury na kolory według wybranego zakresu. **Factory brightness** wyświetla osobny 8-bitowy obraz przetworzony przez kamerę — jego jasność nie jest liniową skalą °C. Legenda pokazuje °C dla liniowych obrazów temperatury i RAW counts dla surowych kodów. Przy CLAHE, DDE i Factory brightness pokazuje rzeczywiste zakresy °C min/max w pięciu pasmach kolorów bieżącej klatki. Puste pasmo oznacza kreska; zakresy mogą się nakładać i nie muszą rosnąć monotonicznie, ponieważ przetwarzanie lokalne nie ma jednej odwrotnej skali temperatur. Zawsze odpowiada aktualnej skali palety, a nie nieprzetworzonym ekstremom odciętym przez zakres Auto/Fixed. Odczyt piksela zawsze pochodzi z oryginalnego RAW.
-
-**X³:** producent opisuje zwiększanie rozdzielczości P3 do 512×384, lecz dostępny sterownik nie ma zweryfikowanej komendy ani implementacji tego algorytmu. Kontrolka X³ jest jawnie nieaktywna. Zwykłe powiększenie JPEG nie jest trybem X³. [Informacje producenta](https://thermalmaster.com/pages/faqs).
-
-## Dokumentacja i rozwój
-
-- [Architektura, kontrakty modułów i rozbudowa](docs/ARCHITECTURE.md)
-- [Dane, eksport, diagnostyka i procedura testów](docs/OPERATIONS.md)
-- [Protokół USB](P3_PROTOCOL.md)
-- [Historyczny eksperyment lock-in](LOCK-IN.md) — zachowany w `lockin.py`, bez integracji z nowym GUI i bez nowych testów sprzętowych.
-- [Archiwum README i zgłoszonych problemów](docs/LEGACY_DEMO.md)
+- [Measurements, RAW editing and video](docs/ANALYSIS.md)
+- [Architecture and extension contracts](docs/ARCHITECTURE.md)
+- [Formats, troubleshooting and verification](docs/OPERATIONS.md)
+- [USB protocol](P3_PROTOCOL.md)
+- [Historical lock-in experiment](LOCK-IN.md)
+- [Archived demo notes and attribution](docs/LEGACY_DEMO.md)
 
 ```bash
 pip install -e '.[dev]'
 python -m pytest -q
-# Opcjonalny test rzeczywistego okna, w sesji graficznej:
+# Optional real-window tests in a graphical desktop session:
 P3_GUI_TEST=1 python -m pytest tests/gui_test.py -q
 ```
 
-Testy nie są częścią uruchamiania aplikacji. `p3_camera_test.py` sprawdza bibliotekę; `p3_viewer_test.py` sprawdza nową implementację, a `tests/gui_test.py` jest opcjonalnym testem desktopu.
-
-Projekt niezależny od producenta. Szczegóły protokołu pochodzą z analizy komunikacji USB i eksperymentów. Licencja Apache 2.0. Oryginalny projekt: Joshua V. Dillon; podziękowania autorom protokołu, wcześniejszych rozszerzeń i zdjęć zachowane w dokumentacji historycznej.
+Tests are not part of application startup. `p3_viewer.py` is the entry point; application modules live in `p3_thermal`. The project is independent of the camera manufacturer and distributed under Apache 2.0. Original project: Joshua V. Dillon. Historical contributor acknowledgements are preserved in the archive.

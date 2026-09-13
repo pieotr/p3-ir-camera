@@ -10,8 +10,15 @@ import tkinter as tk
 import numpy as np
 
 from .acquisition import Acquisition
+from .analysis import AnalysisState
+from .analysis_ui import AnalysisWorkspace
 from .canvas import ThermalCanvas
-from .export import load_snapshot, save_snapshot, snapshot_display_settings
+from .export import (
+    load_raw_image,
+    load_snapshot,
+    save_snapshot,
+    snapshot_display_settings,
+)
 from .image_ui import image_dialog
 from .palette_ui import PalettePanel
 from .palettes import PaletteLibrary, TemperaturePalette
@@ -22,8 +29,8 @@ from .processing import (
     legend_colors,
     orient,
     pixel_label,
-    temperature,
 )
+from .sidebar import Sidebar
 
 
 class ThermalApp:
@@ -35,6 +42,11 @@ class ThermalApp:
         self.root, self.model, self.demo = root, model, demo
         self.worker = None
         self.frame = None
+        self.analysis = AnalysisState()
+        self.analysis_shape = None
+        self.measured = None
+        self.workspace = None
+        self.recorder = None
         self.offline = False
         self.snapshot_metadata = {}
         self.library = PaletteLibrary(PALETTES)
@@ -54,6 +66,7 @@ class ThermalApp:
         self.root.minsize(1100, 850)
         self._style()
         self._build()
+        self.workspace = AnalysisWorkspace(self)
         root.protocol("WM_DELETE_WINDOW", self.close)
         for key, callback in {
             "<Control-x>": self.canvas.inspect,
@@ -78,7 +91,39 @@ class ThermalApp:
         style.configure(
             "TCombobox", fieldbackground="#f0f4f9", foreground="#142030", padding=5
         )
-        style.configure("TEntry", fieldbackground="#f0f4f9", foreground="#142030")
+        for widget in ("TEntry", "TSpinbox", "TCombobox"):
+            style.configure(
+                widget,
+                fieldbackground="#f0f4f9",
+                foreground="#142030",
+                insertcolor="#142030",
+            )
+            style.map(
+                widget,
+                foreground=[("disabled", "#526173"), ("readonly", "#142030")],
+                fieldbackground=[("readonly", "#f0f4f9"), ("disabled", "#d6dee8")],
+            )
+        style.configure(
+            "Treeview",
+            background="#202e40",
+            fieldbackground="#202e40",
+            foreground="#f3f6fa",
+            rowheight=29,
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", "#275f91")],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.configure(
+            "Treeview.Heading", background="#31465e", foreground="#ffffff", padding=6
+        )
+        for widget in ("TCheckbutton", "TRadiobutton"):
+            style.map(
+                widget,
+                foreground=[("disabled", "#9caec2"), ("active", "#ffffff")],
+                background=[("active", "#26384e")],
+            )
         style.configure("TNotebook.Tab", background="#2b3b50", padding=(10, 8))
         style.map(
             "TNotebook.Tab",
@@ -120,11 +165,14 @@ class ThermalApp:
             toolbar, text="Shutter / NUC", command=lambda: self.command("shutter", None)
         )
         self.shutter_button.pack(side="left", padx=3)
+        ttk.Button(
+            header, text="Analysis / RAW / Video", command=self.open_workspace
+        ).pack(side="right")
         ttk.Button(toolbar, text="Help", command=self.help).pack(side="right")
-        body = ttk.Frame(self.root, padding=(16, 0, 16, 8))
+        body = ttk.Panedwindow(self.root, orient="horizontal")
         body.pack(fill="both", expand=True)
         left = ttk.Frame(body)
-        left.pack(side="left", fill="both", expand=True)
+        body.add(left, weight=3)
         self.canvas = ThermalCanvas(
             left,
             self.pixel,
@@ -132,6 +180,7 @@ class ThermalApp:
                 f"Zoom  {scale * 100:.0f}%  ·  wheel to zoom / drag to pan"
             ),
         )
+        self.canvas.on_gesture = self.gesture
         self.canvas.pack(fill="both", expand=True)
         navigation = ttk.Frame(left, padding=(0, 5))
         navigation.pack(fill="x")
@@ -160,9 +209,9 @@ class ThermalApp:
         ).pack(fill="x")
         self.legend = tk.StringVar()
         ttk.Label(left, textvariable=self.legend, padding=8).pack(fill="x")
-        side = ttk.Frame(body, padding=(16, 0, 0, 0), width=280)
-        side.pack(side="right", fill="y")
-        tabs = ttk.Notebook(side)
+        side = ttk.Frame(body, width=540)
+        body.add(side, weight=2)
+        tabs = self.sidebar = Sidebar(side)
         tabs.pack(fill="both", expand=True)
         display = ttk.Frame(tabs, padding=12)
         tabs.add(display, text="View")
@@ -192,7 +241,9 @@ class ThermalApp:
             fill="x"
         )
         ttk.Button(
-            display, text="Temperature vs Factory brightness?", command=self.source_help
+            display,
+            text="Temperature / RAW / Factory: differences?",
+            command=self.source_help,
         ).pack(fill="x", pady=12)
         self.palette_note = tk.StringVar(
             value="Factory palette: range follows Auto / Fixed."
@@ -361,6 +412,7 @@ class ThermalApp:
         self.processor.reset()
         self._render_key = None
         self.worker = Acquisition(self.model, self.demo)
+        self.worker.recorder = self.recorder
         self.worker.start()
 
     def command(self, name, value):
@@ -406,6 +458,7 @@ class ThermalApp:
                     self._waiting = True
                     self._retry_at = time.monotonic() + self.RECONNECT_DELAY
                     self.frame = None
+                    self.measured = None
                     self.canvas.raw = self.canvas.rgb = self.canvas.coordinates = None
                     self.canvas.empty_message = "No camera · waiting for reconnection…"
                     self.canvas.redraw()
@@ -417,21 +470,70 @@ class ThermalApp:
                     )
                 elif time.monotonic() >= self._retry_at:
                     self.connect()
+        if self.workspace is not None:
+            self.workspace.update_values()
         self._poll_id = self.root.after(40, self.poll)
 
     def render(self):
         if self.frame is None:
             return
         custom = self.library.palettes.get(self.settings.palette)
-        key = (id(self.frame), repr(self.settings), repr(custom))
+        if (
+            self.analysis_shape is not None
+            and self.analysis_shape != self.frame.raw.shape
+        ):
+            self.analysis.layers.clear()
+            self.analysis.regions.clear()
+            self.analysis.touch()
+            if self.workspace:
+                self.workspace.undo.clear()
+                self.workspace.refresh_state()
+        self.analysis_shape = self.frame.raw.shape
+        key = (
+            id(self.frame),
+            repr(self.settings),
+            repr(custom),
+            self.analysis.revision,
+        )
         if key != self._render_key:
+            self.measured = self.analysis.celsius(self.frame.raw)
             self._rendered = self.processor.render(
-                self.frame.raw, self.frame.brightness, self.settings, custom
+                self.frame.raw,
+                self.frame.brightness,
+                self.settings,
+                custom,
+                self.measured,
             )
             self._render_key = key
+        assert self.measured is not None
         rgb, limits = self._rendered
+        rgb = rgb.copy()
+        invalid = ~np.isfinite(self.measured)
+        rgb[invalid] = (80, 80, 80)
+        if self.analysis.isotherm:
+            selected = (self.measured >= self.analysis.iso_min) & (
+                self.measured <= self.analysis.iso_max
+            )
+            color = self.analysis.iso_color
+            rgb[selected] = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
+        self.export_rgb = orient(rgb, self.rotation, self.mirror).copy()
+        if (
+            self.workspace
+            and self.canvas.tool in ("Brush", "Eraser")
+            and self.workspace.show_mask.get()
+        ):
+            index = self.workspace.selected_layer()
+            if index is not None and index < len(self.analysis.layers):
+                mask = self.analysis.layers[index].mask
+                rgb[mask] = (0.5 * rgb[mask] + 0.5 * np.array([0, 255, 255])).astype(
+                    np.uint8
+                )
         raw = orient(self.frame.raw, self.rotation, self.mirror)
         coords = np.moveaxis(np.indices(self.frame.raw.shape), 0, -1)
+        self.canvas.regions = self.analysis.regions
+        self.canvas.native_measurements = self.measured
+        self.canvas.measurements = orient(self.measured, self.rotation, self.mirror)
+        self.canvas.corrected = self.analysis.radiometry.enabled
         self.canvas.markers = self.spots.get()
         self.canvas.show_legend = self.show_legend.get()
         unit = "counts" if self.settings.mode == "Raw counts" and not custom else "°C"
@@ -456,9 +558,17 @@ class ThermalApp:
             raw,
             orient(coords, self.rotation, self.mirror),
         )
-        data = temperature(self.frame.raw)
+        data = self.measured[np.isfinite(self.measured)]
+        minimum, maximum, mean = (
+            (data.min(), data.max(), data.mean()) if data.size else (float("nan"),) * 3
+        )
+        label = (
+            "CORRECTED · ESTIMATE"
+            if self.analysis.radiometry.enabled
+            else "SENSOR TEMPERATURE"
+        )
         self.statistics.set(
-            f"SENSOR TEMPERATURE\nMin   {data.min():.6f} °C\nMax   {data.max():.6f} °C\nMean  {data.mean():.6f} °C\n\n{self.frame.raw.shape[1]} × {self.frame.raw.shape[0]} pixels\nNative step: 0.015625 K"
+            f"{label}\nMin   {minimum:.6f} °C\nMax   {maximum:.6f} °C\nMean  {mean:.6f} °C\n\n{self.frame.raw.shape[1]} × {self.frame.raw.shape[0]} pixels\nNative step: 0.015625 K"
         )
         unit = "counts" if self.settings.mode == "Raw counts" and not custom else "°C"
         self.legend.set(
@@ -472,7 +582,10 @@ class ThermalApp:
             self.pixel_text.set("Pixel: move the pointer over the image")
         else:
             x, y, raw = sample
-            self.pixel_text.set(f"Pixel ({x}, {y})   {pixel_label(raw)}   RAW {raw}")
+            text = f"Pixel ({x}, {y})   {pixel_label(raw)}   RAW {raw}"
+            if self.analysis.radiometry.enabled and self.measured is not None:
+                text += f"\nCorrected estimate ≈ {self.measured[y, x]:.3f} °C"
+            self.pixel_text.set(text)
 
     def pause(self):
         if self.offline:
@@ -500,6 +613,23 @@ class ThermalApp:
             self.status.set("No frame to save.")
             return
         frame = self.frame
+        metadata = self.capture_metadata()
+        corrected = (
+            self.analysis.celsius(frame.raw)
+            if self.analysis.radiometry.enabled
+            else None
+        )
+        path = filedialog.asksaveasfilename(
+            defaultextension=".npz", filetypes=[("Thermal snapshot", "*.npz")]
+        )
+        if path:
+            try:
+                save_snapshot(path, frame, metadata, corrected_celsius=corrected)
+                self.status.set(f"Saved thermal data: {path}")
+            except OSError as exc:
+                messagebox.showerror("Save failed", str(exc))
+
+    def capture_metadata(self):
         metadata = {
             **self.snapshot_metadata,
             "snapshot_version": 2,
@@ -515,15 +645,20 @@ class ThermalApp:
         }
         custom = self.library.palettes.get(self.settings.palette)
         metadata["palette_spec"] = custom.to_dict() if custom else None
-        path = filedialog.asksaveasfilename(
-            defaultextension=".npz", filetypes=[("Thermal snapshot", "*.npz")]
-        )
-        if path:
-            try:
-                save_snapshot(path, frame, metadata)
-                self.status.set(f"Saved thermal data: {path}")
-            except OSError as exc:
-                messagebox.showerror("Save failed", str(exc))
+        metadata["analysis"] = self.analysis.to_dict()
+        return metadata
+
+    def open_workspace(self):
+        if self.workspace is None:
+            self.workspace = AnalysisWorkspace(self)
+            self.sidebar.select("Measurements")
+        else:
+            self.sidebar.select("Measurements")
+            self.workspace.refresh_state()
+
+    def gesture(self, phase, tool, start, end):
+        if self.workspace:
+            self.workspace.gesture(phase, tool, start, end)
 
     def screenshot(self):
         if self.frame is None or self.canvas.rgb is None:
@@ -532,9 +667,10 @@ class ThermalApp:
         image_dialog(
             self.root,
             self.frame,
-            self.canvas.rgb.copy(),
+            self.export_rgb.copy(),
             lambda path: self.status.set(f"Saved image: {path}"),
             self.canvas.legend_data if self.show_legend.get() else None,
+            host=self.sidebar,
         )
 
     def palette_changed(self, name):
@@ -553,12 +689,16 @@ class ThermalApp:
     def source_help(self):
         messagebox.showinfo(
             "Image sources",
-            "Temperature: the app converts native 16-bit RAW samples to °C and maps the selected range to colors. Fixed range gives repeatable colors across frames.\n\nFactory brightness: a separate 8-bit image already processed by the camera. It can show clearer detail, but intensity is not a linear temperature scale.\n\nCLAHE increases local contrast; DDE sharpens edges. Both affect visualization only. Pixel readouts always come from the original RAW plane.",
+            "Temperature vs Raw counts: Temperature displays RAW/64−273.15 in °C. Raw counts displays the original uint16 codes with a range in counts. With automatic range, images can look identical because this conversion is linear. RAW mode never changes the stored data.\n\nTemperature: the app converts native 16-bit RAW samples to °C and maps the selected range to colors. Fixed range gives repeatable colors across frames.\n\nFactory brightness: a separate 8-bit image already processed by the camera. It can show clearer detail, but intensity is not a linear temperature scale.\n\nCLAHE increases local contrast; DDE sharpens edges. Both affect visualization only. Pixel readouts always come from the original RAW plane.",
         )
 
     def open_snapshot(self):
         path = filedialog.askopenfilename(
-            filetypes=[("Full thermal snapshot", "*.npz")]
+            filetypes=[
+                ("Radiometric data", "*.npz *.npy *.png"),
+                ("Full thermal snapshot", "*.npz"),
+                ("Standalone 16-bit RAW", "*.png *.npy"),
+            ]
         )
         if path:
             try:
@@ -568,7 +708,21 @@ class ThermalApp:
 
     def import_snapshot(self, path):
         """Enter offline analysis; background camera activity cannot replace this frame."""
-        frame, metadata = load_snapshot(path)
+        from pathlib import Path
+
+        frame, metadata = (
+            load_raw_image(path)
+            if Path(path).suffix.lower() in (".png", ".npy")
+            else load_snapshot(path)
+        )
+        self.apply_import(frame, metadata)
+        self.status.set(f"Imported frozen frame · {path}")
+
+    def apply_import(self, frame, metadata):
+        """Restore a snapshot or the first frame of a radiometric sequence."""
+        restored_analysis = AnalysisState.from_dict(
+            metadata.get("analysis"), frame.raw.shape
+        )
         restored = snapshot_display_settings(metadata)
         rotation = metadata.get("rotation_quarters_ccw", 0)
         mirror = metadata.get("mirror", False)
@@ -600,13 +754,19 @@ class ThermalApp:
             self.library.save(palette)
             self.palette_panel.refresh()
             selected = palette.name
+        self.analysis = restored_analysis
+        self.analysis_shape = frame.raw.shape
         self.offline = True
         self.paused = True
         self.snapshot_metadata = metadata
         self.frame = frame
         self.rotation = rotation
         self.mirror = mirror
-        self.mode.set(restored.mode)
+        sources = ["Temperature", "Filtered temperature", "Raw counts"]
+        if metadata.get("brightness_origin") != "derived_from_raw":
+            sources.append("Factory brightness")
+        self._combos["Source"].configure(values=sources)
+        self.mode.set(restored.mode if restored.mode in sources else "Temperature")
         self.range_mode.set(restored.range_mode)
         self.low.set(str(restored.minimum))
         self.high.set(str(restored.maximum))
@@ -619,17 +779,31 @@ class ThermalApp:
         self._render_key = None
         self.processor.reset()
         self.palette_changed(selected)
-        self.status.set(f"Imported frozen frame · {path}")
+        if self.workspace:
+            self.workspace.undo.clear()
+            self.workspace.refresh_state()
+        self.status.set("Imported radiometric frame")
 
     def return_live(self):
+        if self.workspace:
+            self.workspace.stop_playback()
         self.offline = False
         self.paused = False
         self.snapshot_metadata = {}
+        self._combos["Source"].configure(
+            values=[
+                "Temperature",
+                "Filtered temperature",
+                "Raw counts",
+                "Factory brightness",
+            ]
+        )
         self._waiting = False
         self.pause_button.configure(text="Freeze")
         self.processor.reset()
         self._render_key = None
         self.frame = None
+        self.measured = None
         self.canvas.raw = self.canvas.rgb = self.canvas.coordinates = None
         self.canvas.empty_message = "Waiting for live camera…"
         self.canvas.redraw()
@@ -649,6 +823,8 @@ class ThermalApp:
     def close(self):
         """Keep event processing alive until the USB owner completes cleanup."""
         self.closing = True
+        if self.workspace:
+            self.workspace.stop_playback()
         self.root.after_cancel(self._poll_id)
         self.status.set("Closing · stopping stream and releasing USB…")
         if self.worker:
@@ -657,6 +833,9 @@ class ThermalApp:
 
     def _await_close(self):
         if self.worker and self.worker.is_alive():
+            self.root.after(50, self._await_close)
+        elif self.recorder and self.recorder.is_alive():
+            self.recorder.stop()
             self.root.after(50, self._await_close)
         else:
             self.root.destroy()

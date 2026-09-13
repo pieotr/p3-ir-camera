@@ -34,8 +34,12 @@ class Acquisition(threading.Thread):
         self.commands = queue.Queue()
         self.frames = queue.Queue(maxsize=1)
         self.events = queue.Queue()
+        self.recorder = None
 
     def publish(self, frame):
+        recorder = self.recorder
+        if recorder is not None:
+            recorder.submit(frame)
         with contextlib.suppress(queue.Empty):
             self.frames.get_nowait()
         self.frames.put_nowait(frame)

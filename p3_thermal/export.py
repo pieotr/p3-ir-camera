@@ -8,7 +8,7 @@ import json
 import numpy as np
 
 
-def save_snapshot(path, frame, metadata):
+def save_snapshot(path, frame, metadata, corrected_celsius=None):
     """Save native planes and self-describing JSON; never save display-filtered raw."""
     metadata = {
         **metadata,
@@ -17,12 +17,16 @@ def save_snapshot(path, frame, metadata):
         "conversion": "celsius = raw / 64 - 273.15",
         "raw_unit": "1/64 K",
     }
+    extra = (
+        {} if corrected_celsius is None else {"corrected_celsius": corrected_celsius}
+    )
     with Path(path).open("wb") as stream:
         np.savez_compressed(
             stream,
             raw=frame.raw,
             brightness=frame.brightness,
             metadata=json.dumps(metadata),
+            **extra,
         )
 
 
@@ -183,3 +187,47 @@ def snapshot_display_settings(metadata):
     if metadata.get("snapshot_version", 1) == 1 and "clahe" not in data:
         settings.clahe = settings.detail
     return settings
+
+
+def load_raw_image(path):
+    """Load standalone uint16 PNG/NPY; brightness is explicitly reconstructed, not factory data."""
+    import cv2
+
+    from .acquisition import Frame
+
+    path = Path(path)
+    if path.stat().st_size > 32_000_000:
+        raise ValueError("RAW image exceeds 32 MB")
+    if path.suffix.lower() == ".npy":
+        raw = np.load(path, allow_pickle=False, mmap_mode="r")
+    elif path.suffix.lower() == ".png":
+        import struct
+
+        content = path.read_bytes()
+        if len(content) < 24 or content[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("Invalid PNG header")
+        width, height = struct.unpack(">II", content[16:24])
+        if not 0 < width * height <= 1_048_576:
+            raise ValueError("RAW PNG dimensions exceed the supported limit")
+        raw = cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_UNCHANGED)
+    else:
+        raise ValueError("Expected 16-bit PNG or uint16 NPY")
+    if (
+        raw is None
+        or raw.dtype != np.uint16
+        or raw.ndim != 2
+        or not 0 < raw.size <= 1_048_576
+    ):
+        raise ValueError(
+            "Image must be a nonempty single-channel uint16 RAW sensor plane"
+        )
+    values = raw.astype(np.float64)
+    brightness = (
+        (values - values.min()) / max(1.0, values.max() - values.min()) * 255
+    ).astype(np.uint8)
+    return Frame(raw.copy(), brightness, 0.0), {
+        "brightness_origin": "derived_from_raw",
+        "raw_unit": "1/64 K",
+        "model": "unknown",
+        "demo": False,
+    }
