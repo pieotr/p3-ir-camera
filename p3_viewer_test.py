@@ -76,7 +76,10 @@ def test_all_sources_render_uniform_frames(mode):
         raw, np.full((8, 8), 100, np.uint8), DisplaySettings(mode=mode)
     )
     assert rgb.shape == (8, 8, 3) and rgb.dtype == np.uint8
-    assert (limits is None) == (mode == "Factory brightness")
+    if mode == "Factory brightness":
+        assert limits == (100.0, 100.0)
+    else:
+        assert limits is not None
 
 
 def test_fixed_range_validation():

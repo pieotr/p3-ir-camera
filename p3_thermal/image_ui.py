@@ -1,12 +1,13 @@
 """Explicit image-export choices keep presentation images distinct from sensor RAW."""
 
-from tkinter import filedialog, messagebox, ttk
+from tkinter import ttk
 
 import tkinter as tk
 
 import cv2
 
 from .export import save_image
+from .i18n import filedialog, messagebox
 
 
 def image_dialog(parent, frame, rgb, on_saved, legend=None, host=None):

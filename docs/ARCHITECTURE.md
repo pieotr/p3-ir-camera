@@ -10,7 +10,10 @@
 | `processing.py` | Display settings, normalization, temporal filtering, CLAHE, DDE, LUTs and orientation. |
 | `canvas.py` | Viewport rendering, sensor-coordinate picking, zoom/pan, ROI previews, annotations and legend. |
 | `app.py` | Session state, theme, controls, offline/live transitions and Tk polling. |
-| `sidebar.py` | Persistent section navigation and disposable embedded editor pages. |
+| `comparison_ui.py` | Independent A/B snapshots, shared temperature scale and native-coordinate differences. |
+| `preferences.py` | Validated, atomic per-model mirror preferences separate from project metadata. |
+| `sidebar.py` | Compact two-row section strip above the right pane, separate utility buttons and scrollable tool pages. |
+| `scrolling.py` | Two-axis overflow, automatic scrollbars and control-area wheel routing. |
 | `export.py` | NPZ validation/migration, RAW import and presentation-image export. |
 | `palettes.py` | Absolute-temperature palette validation, mapping and atomic JSON persistence. |
 | `palette_ui.py` | Embedded stop editor and user preset management. |
@@ -61,7 +64,7 @@ The canvas renders only a viewport-sized bitmap with `warpAffine`; it does not a
 
 ## Single-window UI
 
-`Sidebar` registers pages by English section name. Selecting a page changes visibility without destroying persistent state. Temporary editors replace their own previous page; disposing a plot cancels its refresh timer. File and color selection still use native dialogs. The main horizontal pane allows users to allocate space to the image or controls.
+`Sidebar` registers pages by English section name. Category buttons use stable English identifiers and a selected style. Selecting a page changes visibility without destroying persistent state. Temporary editors replace their own previous page; disposing a plot cancels its refresh timer. File and color selection still use native dialogs. `HelpPanel` fills the image area and builds its keyboard reference from the same `SHORTCUTS` registry used to bind actions. The main horizontal pane allows users to allocate space to the image or controls.
 
 The theme explicitly specifies table background/text, selection colors, input fields and readonly/disabled states. New editable widgets should use these ttk styles rather than platform defaults that may mix dark text with dark backgrounds.
 
@@ -83,3 +86,25 @@ The recording thread alone owns the write connection. `submit` samples FPS and e
 - Keep import validation, serialization and numeric processing independent of Tk and cover them with headless tests.
 
 The `p3-viewer` command, direct Python entry point and camera API remain available. Legacy viewer internals and lock-in CLI switches are not part of the new public interface. AUTO gain explicitly raises an unsupported-mode error.
+
+Focus peaking runs after the export RGB copy and cannot change sensor data or saved presentation images. Live correction participates in the render-cache key; changing the opt-in recomputes measurements. Custom auto-scale remaps relative stop positions without mutating the palette definition. Comparison has independent frames/processors and uses a common range for both images.
+
+## Localization and live comparison
+
+`translations.py` holds the Polish catalog and whole-message dynamic templates. `i18n.py` adapts visible labels, readonly choices and dialogs while retaining original model variables. Readonly comboboxes have separate localized display variables mapped back to canonical values before callbacks run. The periodic discovery pass also covers newly opened editors. Language changes do not rebuild the session or modify imported data. New visible strings should be added to the catalog; new dynamic messages should have complete templates to preserve inserted user text.
+
+`ComparisonPanel.sources` independently selects saved, frozen or live input for each slot. Acquisition frames reach `receive_live` before the main-view pause/offline gate. A frozen reference owns copies of both sensor planes and its analysis settings. Live slots use incoming frames; an offline reconnect path restarts acquisition without replacing the imported working frame. No second reader or camera thread is created while an existing acquisition worker is alive. Live-slot disconnect handling clears stale data without discarding reference slots.
+
+Shutdown cancels remaining Tcl scheduled callbacks before destroying widgets. Cancellation uses Tcl directly so each owning widget can dispose its registered callback command once; cross-widget `after_cancel` could otherwise leave stale command registrations.
+
+## Responsive pane layout
+
+The root has a horizontally scrollable action toolbar and a separate compact section strip. `Sidebar` owns a scroll viewport while its navigation is hosted immediately above the right-hand settings pane; Help and Settings buttons use a separate header host. All tool pages, including analysis and temporary editors, use the same scroll container rather than nested per-page canvases.
+
+The main horizontal `Panedwindow` splits images and settings. A nested vertical `Panedwindow` splits the live image and a `ScrollArea` containing navigation controls, zoom, pixel values and legend text. Requested content size is preserved when available space shrinks, enabling both scroll axes rather than clipping controls. Scrollbars appear only on overflow. Wheel routing follows widget ancestry to the nearest control area; thermal canvases retain their own zoom bindings. Shift+wheel selects horizontal scrolling.
+
+GUI verification includes a 520×360 window, English/Polish two-row navigation, both separators, bottom-of-content reachability and overflow scrollbars.
+
+The settings sidebar keeps its vertical scrollbar visible even when the selected page fits, so its location stays predictable. Other overflow bars remain automatic. Section buttons use a subtle one-pixel outline.
+
+Scrollable page widgets must be created with `sidebar.viewport` as their Tk parent; `Sidebar.add` enforces this contract. A sibling of the viewport can be placed in a canvas window but is not clipped by that canvas, allowing its controls to cover scrollbars and adjacent UI. GUI regression checks use screen hit-testing on the scrollbar, not just `winfo_ismapped`, to verify it is actually accessible.

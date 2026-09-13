@@ -130,7 +130,8 @@ def test_clahe_and_dde_are_independent_and_leave_raw_untouched():
         raw, None, DisplaySettings(clahe=True, detail=True), palette()
     )
     plain = Processor().render(raw, None, DisplaySettings(), palette())
-    np.testing.assert_array_equal(enhanced[0], plain[0])
+    assert not np.array_equal(enhanced[0], plain[0])
+    assert enhanced[1] is None
 
 
 def test_snapshot_rejects_invalid_planes(tmp_path):

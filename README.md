@@ -1,6 +1,6 @@
 # P3 Thermal Studio
 
-A modular desktop application for **P3 (256 × 192)** and **P1 (160 × 120)** thermal cameras. The Tk/ttk interface combines live viewing, native pixel measurements, RAW editing and radiometric sequences in one window. The interface and current documentation are in English.
+A modular desktop application for **P3 (256 × 192)** and **P1 (160 × 120)** thermal cameras. The Tk/ttk interface combines live viewing, native pixel measurements, RAW editing and radiometric sequences in one window. The interface defaults to English. Settings → Language switches to Polish immediately and remembers the choice; developer documentation remains in English.
 
 ## Installation
 
@@ -25,7 +25,7 @@ Reload using `sudo udevadm control --reload-rules`, then reconnect the camera. T
 
 ## Workspace
 
-The thermal image stays on the left. Select a section at the top of the **right sidebar**: View, Filters, Sensor, Palettes, Measurements, RAW editing or Video. Drag the divider to resize the sidebar. Analysis, palette editing, image export options and plots use this same window. File and color pickers remain native dialogs.
+The thermal image stays on the left. Use the compact, two-row category strip **directly above the right settings panel**: View, Filters, Sensor, Palettes, Measurements, RAW editing, Video or Compare. Help and Settings are separate compact buttons in the header. Drag the vertical divider to resize the sidebar, or the horizontal divider below the image to resize its navigation/readout panel. Both control panels scroll vertically and horizontally when needed; the category strip scrolls horizontally in narrow windows. The window can be reduced to 520×360. Analysis, palette editing, image export options and plots use this same window. File and color pickers remain native dialogs.
 
 Use the wheel or on-screen +/− buttons to zoom, and Pan or the arrow buttons to move the image. Fit restores the full frame; Pixels enables detailed inspection. Under the image, the left readout shows native sensor coordinates, temperature and RAW counts. Rotation, mirroring and zoom do not alter measurements.
 
@@ -73,7 +73,8 @@ Radiometric correction is an experimental broad-band model, not calibrated P3 sp
 | --- | --- |
 | Pixel inspection at 12800% | Ctrl+X |
 | Save thermal data | Ctrl+S |
-| Fit image | Escape or double click |
+| Cancel drawing and fit image | Escape or double click |
+| Full workspace help | F1 |
 | Zoom | + / − or mouse wheel |
 
 Pixel grid lines appear at 2800%, full temperature labels at 9600%, and zoom is limited to 25600%. The cursor readout remains available at every scale.
@@ -95,3 +96,18 @@ P3_GUI_TEST=1 python -m pytest tests/gui_test.py -q
 ```
 
 Tests are not part of application startup. `p3_viewer.py` is the entry point; application modules live in `p3_thermal`. The project is independent of the camera manufacturer and distributed under Apache 2.0. Original project: Joshua V. Dillon. Historical contributor acknowledgements are preserved in the archive.
+
+
+
+## Additional viewing tools
+
+- **Compare:** two saved images or a frozen reference against the live camera, with a shared scale, pixel inspection and B − A statistics. Each slot offers Open image, Freeze and Live. Freeze copies that slot or the working frame if empty; live comparison continues when the main view is frozen/offline.
+- **White hot / red peak:** grayscale with the hottest end of the temperature range in red; local enhancements are bypassed to keep red tied to temperature.
+- **Auto-scale user palette to frame min/max:** an optional View switch stretches custom colors over the current frame without editing the preset.
+- **Focus peaking:** adjustable green thermal-edge overlay in Filters, excluded from measurements and exports.
+- **Remember mirror:** Sensor saves live-view mirroring per camera model and restores it automatically; imported orientation does not replace this preference.
+- **Live correction:** RAW editing has an explicit experimental switch for applying enabled emissivity correction to the running stream. It starts disabled; material masks do not track motion.
+
+See [operation details](docs/OPERATIONS.md) for exact scale behavior, persistence and comparison limitations.
+
+Help opens a large scrollable panel in the main workspace and documents every registered shortcut, mouse navigation and all tool categories. In Compare, image shortcuts target the last clicked A/B image; text fields keep their standard editing shortcuts.

@@ -13,6 +13,7 @@ PALETTES = {
     "Turbo": cv2.COLORMAP_TURBO,
     "Rainbow": cv2.COLORMAP_JET,
     "White hot": None,
+    "White hot / red peak": None,
     "Black hot": None,
 }
 
@@ -46,6 +47,9 @@ class DisplaySettings:
     detail: bool = False  # DDE only; legacy snapshots migrate the combined flag
     clahe: bool = False
     dde_strength: float = 1.5
+    custom_auto_scale: bool = False
+    enhance_custom_palette: bool = False
+    enhancements_enabled: bool = True
 
 
 class Processor:
@@ -62,7 +66,10 @@ class Processor:
     def render(self, raw, brightness, settings, custom_palette=None, measured=None):
         """Return RGB sensor-sized image and actual display limits (or None)."""
         self.temperature_bands = None
-        data = temperature(raw) if measured is None else measured
+        if settings.mode == "Factory brightness":
+            data = np.asarray(brightness, dtype=np.float64)
+        else:
+            data = temperature(raw) if measured is None else measured
         if settings.mode == "Filtered temperature":
             self.previous = (
                 data.copy()
@@ -70,15 +77,56 @@ class Processor:
                 else (settings.alpha * data + (1 - settings.alpha) * self.previous)
             )
             data = self.previous
+        custom_first = custom_last = None
         if custom_palette is not None:
-            # Absolute temperature stops must never be distorted by AGC/CLAHE/DDE.
-            return custom_palette.colorize(np.nan_to_num(data)), (
-                custom_palette.stops[0][0],
-                custom_palette.stops[-1][0],
-            )
-        if settings.mode == "Factory brightness":
-            gray = brightness
-            limits = None
+            first, last = custom_palette.stops[0][0], custom_palette.stops[-1][0]
+            custom_first, custom_last = first, last
+            if settings.range_mode == "Fixed" and not settings.custom_auto_scale:
+                low, high = settings.minimum, settings.maximum
+                if high <= low:
+                    raise ValueError("Maximum must be greater than minimum")
+                palette_data = first + (data - low) / (high - low) * (
+                    last - first
+                )
+                limits = (low, high)
+            else:
+                finite = data[np.isfinite(data)]
+                low, high = (
+                    (
+                        (float(finite.min()), float(finite.max()))
+                        if settings.custom_auto_scale
+                        else tuple(np.percentile(finite, (1, 99)))
+                    )
+                    if finite.size
+                    else (0.0, 1.0)
+                )
+                palette_data = first + (data - low) / max(high - low, 1e-9) * (
+                    last - first
+                )
+                limits = (low, high)
+            gray = (
+                np.nan_to_num(
+                    np.clip((palette_data - first) / max(last - first, 1e-9), 0, 1)
+                )
+                * 255
+            ).astype(np.uint8)
+        elif settings.mode == "Factory brightness":
+            finite = data[np.isfinite(data)]
+            if settings.range_mode == "Fixed":
+                low, high = settings.minimum, settings.maximum
+                if high <= low:
+                    raise ValueError("Maximum must be greater than minimum")
+            else:
+                low, high = (
+                    np.percentile(finite, (1, 99))
+                    if finite.size
+                    else (0.0, 255.0)
+                )
+            limits = (float(low), float(high))
+            gray = (
+                np.nan_to_num(np.clip((data - low) / max(high - low, 1e-9), 0, 1))
+                * 255
+            ).astype(np.uint8)
         else:
             if settings.mode == "Raw counts":
                 data = raw.astype(np.float64)
@@ -99,10 +147,11 @@ class Processor:
             gray = (
                 np.nan_to_num(np.clip((data - low) / max(high - low, 1e-9), 0, 1)) * 255
             ).astype(np.uint8)
-        if settings.clahe:
+        enhancements_enabled = getattr(settings, "enhancements_enabled", True)
+        if settings.clahe and enhancements_enabled:
             gray = cv2.createCLAHE(2.0, (8, 8)).apply(gray)
             limits = None
-        if settings.detail and settings.dde_strength > 0:
+        if settings.detail and settings.dde_strength > 0 and enhancements_enabled:
             values = gray.astype(np.float32)
             blurred = cv2.GaussianBlur(values, (0, 0), 1.2)
             gray = (
@@ -113,7 +162,14 @@ class Processor:
             limits = None  # nonlinear enhancement invalidates a quantitative legend
         if limits is None:
             self.temperature_bands = observed_temperature_bands(raw, gray, measured)
-        if settings.palette in ("White hot", "Black hot"):
+        if custom_palette is not None:
+            enhanced = custom_first + gray.astype(np.float64) / 255 * (
+                custom_last - custom_first
+            )
+            rgb = custom_palette.colorize(enhanced)
+        elif settings.palette == "White hot / red peak":
+            rgb = red_peak_colors()[gray]
+        elif settings.palette in ("White hot", "Black hot"):
             if settings.palette == "Black hot":
                 gray = 255 - gray
             rgb = np.repeat(gray[..., None], 3, axis=2)
@@ -130,6 +186,8 @@ def legend_colors(settings, custom_palette=None):
         return custom_palette.colorize(
             np.linspace(custom_palette.stops[0][0], custom_palette.stops[-1][0], 256)
         )
+    if settings.palette == "White hot / red peak":
+        return red_peak_colors()
     gray = np.arange(256, dtype=np.uint8).reshape(256, 1)
     if settings.palette in ("White hot", "Black hot"):
         if settings.palette == "Black hot":
@@ -156,3 +214,26 @@ def observed_temperature_bands(raw, gray, measured=None):
             (float(values.min()), float(values.max())) if values.size else None
         )
     return tuple(result)
+
+
+def red_peak_colors():
+    """Black-to-white ramp with a red upper tail (top 5% of the display range)."""
+    gray = np.arange(256, dtype=np.float64)
+    base = np.minimum(gray / 242 * 255, 255)
+    ramp = np.repeat(base[:, None], 3, axis=1)
+    ramp[243:, 1:] = np.linspace(235, 0, 13)[:, None]
+    return ramp.round().astype(np.uint8)
+
+
+def focus_peaking(rgb, raw, threshold=0.35):
+    """Highlight strong native thermal gradients without altering measurement data."""
+    values = np.asarray(raw, dtype=np.float32)
+    values = cv2.GaussianBlur(values, (0, 0), 0.7)
+    dx = cv2.Sobel(values, cv2.CV_32F, 1, 0)
+    dy = cv2.Sobel(values, cv2.CV_32F, 0, 1)
+    strength = cv2.magnitude(dx, dy)
+    peak = float(strength.max())
+    result = rgb.copy()
+    if peak > 0:
+        result[strength > max(1.0, peak * threshold)] = (0, 255, 80)
+    return result

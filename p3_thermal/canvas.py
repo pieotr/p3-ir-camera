@@ -7,6 +7,7 @@ import tkinter as tk
 import cv2
 import numpy as np
 
+from .i18n import translate
 from .processing import pixel_label
 
 
@@ -34,6 +35,7 @@ class ThermalCanvas(tk.Canvas):
         self.legend_rect = None
         self.legend_photo = None
         self.photo = None
+        self.overlay_drawer: Callable[[], None] | None = None
         self.empty_message = "Waiting for thermal frames…"
         self.bind(
             "<Configure>", lambda e: self.fit() if self.auto_fit else self.redraw()
@@ -49,6 +51,11 @@ class ThermalCanvas(tk.Canvas):
         self.bind("<B1-Motion>", self.pan)
         self.bind("<ButtonRelease-1>", self.finish_gesture)
         self.bind("<Double-Button-1>", lambda e: self.fit())
+
+    def create_text(self, *args, **kwargs):
+        if "text" in kwargs:
+            kwargs["text"] = translate(kwargs["text"])
+        return super().create_text(*args, **kwargs)
 
     def set_frame(self, rgb, raw, coordinates):
         self.rgb, self.raw, self.coordinates = rgb, raw, coordinates
@@ -205,7 +212,9 @@ class ThermalCanvas(tk.Canvas):
             borderValue=(16, 21, 29),
         )
         self.photo = tk.PhotoImage(
-            data=f"P6\n{width} {height}\n255\n".encode() + view.tobytes(), format="PPM"
+            master=self,
+            data=f"P6\n{width} {height}\n255\n".encode() + view.tobytes(),
+            format="PPM",
         )
         self.create_image(0, 0, image=self.photo, anchor="nw")
         h, w = self.raw.shape
@@ -279,6 +288,8 @@ class ThermalCanvas(tk.Canvas):
         self.draw_regions()
         self.draw_preview()
         self.draw_legend()
+        if self.overlay_drawer is not None:
+            self.overlay_drawer()
 
     def draw_legend(self):
         """Overlay a labeled ramp; intensity legends deliberately never claim Celsius."""
@@ -307,7 +318,9 @@ class ThermalCanvas(tk.Canvas):
             interpolation=cv2.INTER_NEAREST,
         )
         self.legend_photo = tk.PhotoImage(
-            data=f"P6\n18 {bar_height}\n255\n".encode() + ramp.tobytes(), format="PPM"
+            master=self,
+            data=f"P6\n18 {bar_height}\n255\n".encode() + ramp.tobytes(),
+            format="PPM",
         )
         self.create_image(x, y + 25, image=self.legend_photo, anchor="nw")
         for index, fraction in enumerate((0, 0.25, 0.5, 0.75, 1)):

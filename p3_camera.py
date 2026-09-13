@@ -988,7 +988,6 @@ class P3Camera:
 
         start_cnt1 = int(start_marker["cnt1"][0])
         end_cnt1 = int(end_marker["cnt1"][0])
-        frame_cnt3 = int(end_marker["cnt3"][0])
 
         # Validate cnt1 matches between start and end markers
         if start_cnt1 != end_cnt1:

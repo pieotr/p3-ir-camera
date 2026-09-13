@@ -16,6 +16,8 @@ pytestmark = pytest.mark.skipif(
 def test_desktop_zoom_sources_and_shutdown():
     import tkinter as tk
 
+    import numpy as np
+
     from p3_thermal.app import ThermalApp
 
     root = tk.Tk()
@@ -38,9 +40,15 @@ def test_desktop_zoom_sources_and_shutdown():
             app.mode.set(mode)
             app.update_settings()
             root.update()
+        app.mode.set("Factory brightness")
+        for palette in ("White hot", "White hot / red peak", "Inferno"):
+            app.palette.set(palette)
+            app.palette_changed(palette)
+            app.update_settings()
+            assert app.settings.mode == "Factory brightness"
         app.clahe.set(True)
         app.update_settings()
-        assert app.canvas.legend_data[3] == "°C min/max"
+        assert app.canvas.legend_data[3] == "°C"
         assert len(app.canvas.legend_data[4]) == 5
         app.detail.set(True)
         app.dde_strength.set(3.0)
@@ -60,6 +68,14 @@ def test_desktop_zoom_sources_and_shutdown():
             app.canvas.offset[0] + 0.5 * app.canvas.pixel_scale,
             app.canvas.offset[1] + 0.5 * app.canvas.pixel_scale,
         )
+        expected_measurements = np.fliplr(np.rot90(app.measured, 1))
+        np.testing.assert_array_equal(
+            app.canvas.native_measurements, expected_measurements
+        )
+        app.analysis.radiometry.enabled = True
+        app.render()
+        app.pixel((0, 0, int(app.canvas.raw[0, 0])))
+        assert f"{expected_measurements[0, 0]:.3f}" in app.pixel_text.get()
         assert "RAW" in app.pixel_text.get()
         assert not errors
     finally:
@@ -153,6 +169,26 @@ def test_disconnect_waits_reconnects_and_close_cancels_retries(monkeypatch):
 def isolated_palette_config(monkeypatch, tmp_path):
     """GUI tests never read or overwrite the user's saved palettes."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    yield
+    import tkinter as tk
+
+    deadline = time.monotonic() + 5
+    while (
+        getattr(tk, "_default_root", None) is not None and time.monotonic() < deadline
+    ):
+        with contextlib.suppress(tk.TclError):
+            tk._default_root.update()
+        time.sleep(0.01)
+    remaining = getattr(tk, "_default_root", None)
+    if remaining is not None:
+        captured = [
+            cell.cell_contents
+            for cell in (
+                getattr(remaining.report_callback_exception, "__closure__", None) or ()
+            )
+        ]
+        remaining.destroy()
+        pytest.fail(f"Window cleanup did not finish: {captured}")
 
 
 def test_imported_frame_survives_live_frames_and_disconnect(monkeypatch, tmp_path):
@@ -199,7 +235,7 @@ def test_imported_frame_survives_live_frames_and_disconnect(monkeypatch, tmp_pat
         app.canvas.inspect()
         root.update()
         imported_rgb = app.canvas.rgb.copy()
-        app.palette.set("White hot")
+        app.palette.set("White hot / red peak")
         app.update_settings()
         assert not np.array_equal(imported_rgb, app.canvas.rgb)
         np.testing.assert_array_equal(app.frame.raw, raw)
@@ -247,8 +283,16 @@ def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_p
         pump(0.2)
         assert app.frame is not None
         app.open_workspace()
+        assert app.sidebar.selection.get() == "Measurements"
+        app.open_workspace()
+        assert app.sidebar.selection.get() == "View"
+        app.open_workspace()
         panel = app.workspace
         app.pause()
+        panel.tool_box.set("Rectangle")
+        panel.tool_box.event_generate("<<ComboboxSelected>>")
+        root.update()
+        assert panel.tool.get() == app.canvas.tool == "Rectangle"
         app.rotate()
         app.flip()
         panel.set_tool("Line")
@@ -260,6 +304,13 @@ def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_p
         assert not app.canvas.find_withtag("roi_preview")
         assert app.analysis.regions[0].start == (20, 20)
         assert app.analysis.regions[0].end == (30, 30)
+        for tool in ("Circle", "Rectangle"):
+            panel.set_tool(tool)
+            app.canvas.start_pan(SimpleNamespace(x=a[0], y=a[1]))
+            app.canvas.pan(SimpleNamespace(x=b[0], y=b[1]))
+            assert app.canvas.find_withtag("roi_preview")
+            app.canvas.finish_gesture(SimpleNamespace(x=b[0], y=b[1]))
+            assert not app.canvas.find_withtag("roi_preview")
         panel.rois.selection_set("0")
         panel.line_profile()
         pump(0.1)
@@ -289,6 +340,56 @@ def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_p
         frame, metadata = load_snapshot(project)
         assert "analysis" in metadata
         np.testing.assert_array_equal(frame.raw, app.frame.raw)
+        app.comparison.load(0, project)
+        app.comparison.load(1, project)
+        assert "mean +0.000" in app.comparison.summary.get()
+        app.sidebar.select("Compare")
+        pump(0.1)
+        original_shape = app.comparison.canvases[0].raw.shape
+        app.comparison.rotate()
+        assert app.comparison.canvases[0].raw.shape == original_shape[::-1]
+        assert app.comparison.canvases[1].raw.shape == original_shape[::-1]
+        app.comparison.flip()
+        assert app.comparison.mirror
+        app.comparison.split_view.set(True)
+        app.comparison.toggle_split()
+        app.comparison.split_position.set(30)
+        app.comparison.update_split()
+        pump(0.05)
+        assert app.comparison.split_controls.winfo_ismapped()
+        assert app.comparison.split_canvas.find_withtag("split_boundary")
+        old_position = app.comparison.split_position.get()
+        boundary_x = app.comparison.split_boundary_x()
+        app.comparison.start_split_drag(
+            SimpleNamespace(x=boundary_x, y=20)
+        )
+        app.comparison.drag_split(
+            SimpleNamespace(x=boundary_x + 20, y=20)
+        )
+        app.comparison.finish_split_drag(
+            SimpleNamespace(x=boundary_x + 20, y=20)
+        )
+        assert app.comparison.split_position.get() != old_position
+        app.comparison.split_view.set(False)
+        app.comparison.toggle_split()
+        assert not any(
+            isinstance(child, tk.Toplevel) for child in root.winfo_children()
+        )
+        app.peaking.set(True)
+        app.render()
+        app.pause()
+        assert not app.correction_active
+        panel.live_correction.set(True)
+        panel.changed()
+        assert app.correction_active
+        app.pause()
+        app.screenshot()
+        assert app.sidebar.selection.get() == "Save image"
+        app.palette_panel.edit()
+        assert app.sidebar.selection.get() == "Palette editor"
+        assert not any(
+            isinstance(child, tk.Toplevel) for child in root.winfo_children()
+        )
         sequence = tmp_path / "recording.p3v"
         monkeypatch.setattr(
             "p3_thermal.analysis_ui.filedialog.asksaveasfilename",
@@ -322,3 +423,174 @@ def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_p
             time.sleep(0.01)
         with contextlib.suppress(tk.TclError):
             root.update()
+
+
+def test_live_comparison_language_navigation_and_full_help(tmp_path):
+    from types import SimpleNamespace
+
+    import tkinter as tk
+
+    import numpy as np
+
+    from p3_thermal.app import ThermalApp
+    from p3_thermal.export import save_snapshot
+    from p3_thermal.help_ui import SHORTCUTS
+    from p3_thermal.preferences import Preferences
+
+    root = tk.Tk()
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(args)
+    app = ThermalApp(root, demo=True)
+
+    def pump(seconds=0.2):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+
+    try:
+        pump()
+        app.pause()
+        app.sidebar.buttons["Compare"].invoke()
+        comparison = app.comparison
+        comparison.freeze(0)
+        reference = comparison.items[0][0].raw.copy()
+        comparison.live(1)
+        pump()
+        first_time = comparison.items[1][0].timestamp
+        pump()
+        assert comparison.items[1][0].timestamp > first_time
+        np.testing.assert_array_equal(comparison.items[0][0].raw, reference)
+        assert app.paused
+        comparison.freeze(1)
+        frozen_time = comparison.items[1][0].timestamp
+        pump()
+        assert comparison.items[1][0].timestamp == frozen_time
+        path = tmp_path / "reference.npz"
+        save_snapshot(path, app.frame, app.capture_metadata())
+        app.import_snapshot(path)
+        working = app.frame
+        comparison.load(0, path)
+        comparison.live(1)
+        pump()
+        assert app.offline and app.frame is working
+        comparison.clear_live()
+        assert comparison.items[0] is not None and comparison.items[1] is None
+        pump()
+        assert comparison.items[1] is not None
+        app.sidebar.buttons["Settings"].invoke()
+        app.language.set("Polski")
+        app.change_language()
+        pump()
+        assert app.sidebar.buttons["View"].cget("text") == "Widok"
+        assert app.sidebar.selection.get() == "Settings"
+        source = app._combos["Source"]
+        source.set("Wartości RAW")
+        source.event_generate("<<ComboboxSelected>>")
+        assert app.mode.get() == app.settings.mode == "Raw counts"
+        app.translator.refresh()
+        assert source.get() == "Wartości RAW"
+        assert Preferences(model="p3").language == "pl"
+        app.help()
+        pump()
+        content = app.help_panel.text.get("1.0", "end")
+        assert "INSTRUKCJA OBSŁUGI" in content
+        assert all(key in content for _, key, _, _ in SHORTCUTS)
+        assert app.help_panel.winfo_width() > 500
+        assert app.help_panel.winfo_height() > 400
+        assert not any(
+            isinstance(child, tk.Toplevel) for child in root.winfo_children()
+        )
+        app.shortcut(SimpleNamespace(widget=app.help_panel.text), "zoom_in")
+        app.language.set("English")
+        app.change_language()
+        assert app.sidebar.buttons["View"].cget("text") == "View"
+        assert source.get() == "Raw counts"
+        assert app.settings.mode == "Raw counts"
+        assert not errors
+    finally:
+        app.close()
+        deadline = time.monotonic() + 3
+        while app.worker.is_alive() and time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+        with contextlib.suppress(tk.TclError):
+            root.update()
+
+
+def test_compact_navigation_and_scrollable_resizable_panels():
+    import tkinter as tk
+
+    from p3_thermal.app import ThermalApp
+
+    root = tk.Tk()
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(args)
+    app = ThermalApp(root, demo=True)
+
+    def pump():
+        deadline = time.monotonic() + 0.15
+        while time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+
+    try:
+        pump()
+        sections = [
+            button
+            for name, button in app.sidebar.buttons.items()
+            if name not in ("Help", "Settings")
+        ]
+        assert len({button.winfo_y() for button in sections}) == 2
+        assert (
+            max(button.winfo_height() for button in sections)
+            < app.pause_button.winfo_height()
+        )
+        assert app.sidebar.navigation_area.master is app.sidebar.master
+        assert app.sidebar.navigation_area.winfo_rootx() == app.sidebar.winfo_rootx()
+        assert app.sidebar.navigation_area.winfo_rooty() < app.sidebar.winfo_rooty()
+        assert app.sidebar.buttons["Help"].master is app.utility_bar
+        assert app.sidebar.buttons["Settings"].master is app.utility_bar
+        assert "Analysis / RAW / Video" not in [
+            button.cget("text") for button in sections
+        ]
+        root.geometry("520x360")
+        pump()
+        assert root.winfo_width() == 520 and root.winfo_height() == 360
+        app.body.sashpos(0, 290)
+        app.image_info_split.sashpos(0, 85)
+        app.sidebar.select("RAW editing")
+        pump()
+        assert app.sidebar.navigation_area.horizontal.winfo_ismapped()
+        assert app.sidebar.vertical.winfo_ismapped()
+        bar = app.sidebar.vertical
+        assert (
+            root.winfo_containing(
+                bar.winfo_rootx() + bar.winfo_width() // 2, bar.winfo_rooty() + 20
+            )
+            is bar
+        ), "Page content covers the menu scrollbar"
+        assert app.sidebar.horizontal.winfo_ismapped()
+        assert app.info_area.vertical.winfo_ismapped()
+        assert app.info_area.horizontal.winfo_ismapped()
+        app.sidebar.viewport.yview_moveto(1)
+        app.info_area.viewport.yview_moveto(1)
+        pump()
+        assert app.sidebar.viewport.yview()[1] == 1
+        assert app.info_area.viewport.yview()[1] == 1
+        old_height = app.info_area.winfo_height()
+        app.image_info_split.sashpos(0, 40)
+        pump()
+        assert app.info_area.winfo_height() > old_height
+        app.sidebar.select("View")
+        pump()
+        assert app.sidebar.viewport.yview()[0] == 0
+        assert app.sidebar.content is app.sidebar.pages["View"]
+        app.language.set("Polski")
+        app.change_language()
+        pump()
+        assert len({button.winfo_y() for button in sections}) == 2
+        assert app.sidebar.buttons["Settings"].winfo_ismapped()
+        assert not errors
+    finally:
+        app.close()

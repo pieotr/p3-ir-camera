@@ -1,6 +1,6 @@
 # Measurements, RAW editing and radiometric video
 
-Choose **Measurements**, **RAW editing** or **Video** in the right sidebar. The Analysis / RAW / Video header button selects Measurements. The image, controls, palette editor, export options and profiles remain in one window. Resize the sidebar using the divider; scroll long analysis pages with their vertical scrollbar.
+Choose **Measurements**, **RAW editing** or **Video** using the compact category strip above the right settings panel. The image, controls, palette editor, export options and profiles remain in one window. Resize the sidebar using the vertical divider; use its scrollbars to reach all controls in narrow or short windows. The horizontal divider below the image adjusts the height of the separately scrollable navigation and pixel-readout panel.
 
 ## Temperature, Raw counts and Factory brightness
 
@@ -32,7 +32,7 @@ Enable Isotherm, enter inclusive lower/upper temperature limits, choose a color 
 
 ## RAW editing
 
-Enable experimental radiometric correction, enter parameters and click Apply radiometric parameters. Correction works on live and imported frames. Disabling it restores original readings. The cursor retains original temperature/RAW and labels the modeled result **Corrected estimate**.
+Enable experimental radiometric correction, enter parameters and click Apply radiometric parameters. Correction works on imported/frozen frames. For live acquisition, also enable **Apply correction to live stream (experimental)**; this separate opt-in starts disabled. Painted layers remain fixed to sensor coordinates, so live correction is not recommended without validating the scene and model. Disabling it restores original readings. The cursor retains original temperature/RAW and labels the modeled result **Corrected estimate**.
 
 | Parameter | Meaning |
 | --- | --- |

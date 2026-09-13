@@ -1,101 +1,52 @@
-# Obsługa, dane i weryfikacja
+# Operation, formats and verification
 
-## Typowy pomiar
+## Typical measurement
 
-1. Uruchom `p3-viewer --model p3` lub `--model p1`. Inicjalizacja USB trwa kilka sekund; okno w tym czasie odpowiada na zdarzenia.
-2. Wybierz Temperature i paletę. Dla porównywania scen ustaw Fixed oraz wspólne granice °C, a następnie Apply range.
-3. Najedź na punkt: wiersz pod obrazem pokazuje współrzędne oryginalnego sensora, sześciocyfrowy odczyt °C i liczbę RAW.
-4. Kółkiem przybliż interesujący fragment; Ctrl+X uruchamia inspekcję pikseli. Przeciąganie przesuwa widok. Escape przywraca dopasowanie.
-5. Freeze pozwala analizować i zapisać konkretną klatkę. Save data zachowuje wartości sensora; Save image eksportuje sam obraz z paletą.
-6. Zamknij przez X i poczekaj na zakończenie cleanup, szczególnie podczas inicjalizacji lub kalibracji.
+1. Start `p3-viewer` (P3), `p3-viewer --model p1`, or `p3-viewer --demo`.
+2. In View, choose Temperature and a palette. Use Fixed and Apply range for consistent temperature limits between scenes.
+3. Hover over a pixel to read native coordinates, six-decimal °C and RAW below the image. Wheel/+/- zoom, Pan/arrows move, and Fit/Escape restore the full frame.
+4. Freeze holds the displayed frame while acquisition continues. Save data preserves radiometry; Save image opens export settings in the sidebar.
+5. Select Measurements, RAW editing, Video or Compare using the category buttons. The compact category strip above the right settings panel selects the sidebar content; selecting View restores Pan. Help and Settings are separate header buttons.
+6. Close using the window's X and allow acquisition/recording cleanup to finish.
 
-Nie ma programowego uśredniania odczytu kursora. W trybie Filtered temperature obraz może reagować wolniej niż odczyt z bieżącego RAW — to zamierzona separacja wizualizacji i pomiarów. Średnia całej klatki jest statystyką obliczoną, nie dodatkowym pomiarem sprzętowym.
+Temporal filtering changes presentation, not the cursor's native sample. Corrected live measurements require both correction parameters to be enabled and the explicit live-correction switch. Frozen/offline correction remains independently available.
 
-## Format NPZ
-
-Archiwum można czytać bez aplikacji, bez picklowania obiektów:
+## NPZ format
 
 ```python
 import json
 import numpy as np
 
 with np.load("capture.npz", allow_pickle=False) as capture:
-    raw = capture["raw"]                 # H×W uint16, orientacja sensora
+    raw = capture["raw"]                 # H×W uint16, native sensor orientation
     brightness = capture["brightness"]   # H×W uint8
     metadata = json.loads(str(capture["metadata"]))
     celsius = raw.astype(np.float64) / 64 - 273.15
-    print(f"{celsius[10, 20]:.6f} °C")    # sensor x=20, y=10
+    print(f"{celsius[10, 20]:.6f} °C")    # Native x=20, y=10
 ```
 
-Metadane zawierają model, flagę demo, ustawienia obrazu, obrót i odbicie, czas zapisu UTC, monotoniczny czas pobrania klatki, jednostkę RAW i wzór konwersji. UTC oznacza chwilę zapisu, nie dokładną chwilę ekspozycji. NPZ zachowuje natywną orientację, także jeśli obraz był obrócony. Save image rozróżnia natywny 16-bitowy PNG RAW od kolorowego PNG. PNG RAW zachowuje radiometryczne kody sensora, ale nie zawiera osobnego kanału jasności ani metadanych NPZ. Kolorowe obrazy nie zastępują danych radiometrycznych. Dialog zapisu obejmuje klatkę obecną w momencie jego otwarcia.
+Metadata includes camera model, demo flag, display settings, rotation/mirror, UTC export time, host monotonic frame time, RAW unit and conversion. UTC is save time, not exposure time. Version 2 separates CLAHE/DDE settings and includes custom palette definitions. Legacy combined `detail` flags migrate to both filters. Analysis metadata preserves regions, masks, isotherms and correction parameters; `corrected_celsius` is an optional derived export.
 
-## Diagnostyka
+Open RAW accepts NPZ, uint16 NPY and native 16-bit single-channel PNG. Imports validate types, size, units and settings without pickle; unpacked NPZ content is limited to 32 MB. Standalone PNG/NPY has no factory brightness or measurement metadata, so brightness is explicitly reconstructed and Factory brightness is unavailable.
 
-| Objaw | Postępowanie |
+Imports restore display settings and orientation and stay frozen despite incoming USB frames or disconnection. Custom palette name conflicts create a new name without overwriting existing presets. Return to live resumes normal acquisition. Imported orientation never overwrites your saved camera mirror preference.
+
+## Image export
+
+| Format | Content |
 | --- | --- |
-| Camera not found | Sprawdź model, kabel, identyfikatory USB i dostęp urządzenia. Po podłączeniu poczekaj na automatyczne wznowienie; Reconnect przyspiesza próbę. |
-| Access denied / busy | Sprawdź reguły udev/WinUSB oraz czy inna aplikacja nie zajmuje kamery. |
-| Brak display / Tk | Uruchom w sesji graficznej i zainstaluj Tk dla używanego Pythona. |
-| Disconnected / error | Okno pozostaje otwarte, obraz i pomiary są zastąpione komunikatem o braku kamery. Podłącz ponownie: aplikacja automatycznie wznowi podgląd po inicjalizacji. |
-| Nieprawidłowy zakres | Wpisz skończone liczby, maksimum większe od minimum. Odrzucone ustawienie nie zmienia aktywnego przetwarzania. |
-| Kolory nie odpowiadają °C | Factory brightness, CLAHE i DDE nie mają liniowej zależności kolor–temperatura. Użyj Temperature, Fixed i wyłącz CLAHE/DDE albo wybierz własną paletę o progach °C. |
-| Początkowo pomijane klatki | Protokół może wymagać odzyskania synchronizacji; użyj `--debug` do diagnostyki. Nie gwarantujemy usunięcia wszystkich początkowych odrzuceń bez testu sprzętowego. |
+| JPEG | Full current color frame; bicubic enlargement 1–8×, default 3×; quality 1–100, default 95. |
+| Native RAW PNG | Original uint16 sensor matrix in native orientation, without filters, scaling or legend. |
+| Color PNG | Lossless current RGB image in sensor resolution with the selected orientation. |
+| NPZ via Save data | Both native camera planes and metadata, including analysis and palette settings. |
 
-Freeze nie zatrzymuje strumienia. Reconnect nie uruchamia drugiego wątku, dopóki poprzedni nie zakończy cleanup. Program nie przełącza automatycznie modelu urządzenia.
+Image options capture the frame when opened, so live updates cannot change the selected export. Include legend appends a scale to color images only and increases output dimensions. Exports include the full frame, not the viewport crop, pixel grid or ROI markers. Focus peaking and the emissivity painting mask are viewing aids and are excluded. RAW PNG may look dark in an ordinary viewer; JPEG smoothing does not add sensor measurements.
 
-## Testy wykonane i granice weryfikacji
+## User palettes and automatic scale
 
-Automatyczne testy jednostkowe obejmują protokół z istniejącego zestawu, wszystkie 65536 możliwych sześciocyfrowych odczytów temperatur, wszystkie kombinacje obrotu i odbicia, wybór piksela, filtry, tryby źródeł, zapis NPZ, zwolnienie zasobów mimo błędu i zakończenie generatora demo. Opcjonalny test Tk otwiera rzeczywiste okno, przełącza źródła, sprawdza temperatury w etykietach zoomu, orientację i zamknięcie.
+Palettes → New opens the embedded editor. Provide a name and 2–64 strictly increasing finite temperature/color stops. Color opens a picker; Add/Update/Remove edit stops. Save and use persists the preset. A different name creates a copy. Factory palette names are protected in both UI and data validation.
 
-Podczas refaktoryzacji podłączono **P3, firmware 00.00.02.18**. Potwierdzono rzeczywiste klatki 256×192 uint16, około 25 klatek/s po rozruchu, działanie migawki, ponowne otwarcie po zamknięciu oraz przejście testu całego GUI z kamerą (tryby źródeł, zoom z temperaturami, obrót/odbicie, zamknięcie). Rozruch do pierwszej klatki trwał około 5 sekund. Wykonano też fizyczne odłączenie USB podczas pracy GUI: aplikacja wykryła błąd urządzenia, a osobny skrypt testowy celowo uruchomił zarejestrowaną procedurę WM_DELETE_WINDOW (tę samą co X); nie jest to zachowanie produkcyjnej aplikacji, okno i wątek zakończyły pracę. Ponowne otwarcie sprawdzono po programowym zamknięciu; automatyczne ponowne połączenie w tym samym oknie sprawdza dodatkowy test GUI z symulowanym urządzeniem (brak kamery przy starcie, odłączenie, ponowne połączenie i zamknięcie podczas oczekiwania). Fizyczne ponowne podłączenie po tej zmianie pozostaje do osobnego testu.
-
-Wykryto ograniczenie: LOW zmieniał zakres tej samej sceny z około 20–25°C na około −34°C. Kalibracja migawką nie usunęła tego przesunięcia; powrót do HIGH przywracał poprzedni zakres. LOW ma zatem status eksperymentalny, a jego odczytów nie należy traktować jako zweryfikowanych temperatur. Nie dopasowano sztucznego offsetu do jednej sceny. Dokumentacja [oryginalnego protokołu](https://github.com/jvdillon/p3-ir-camera/blob/main/P3_PROTOCOL.md) opisuje wspólne kodowanie 1/64 K i komendy gain, lecz nie wyjaśnia zaobserwowanej różnicy. Sporadyczny timeout potwierdzenia polecenia migawki jest raportowany; aplikacja próbuje dalej odbierać klatki zamiast natychmiast kończyć sesję.
-
-Test GUI na Pythonie 3.14 ignoruje tylko znane ostrzeżenie deprecacji struktury ctypes w backendzie libusb0 biblioteki PyUSB; pozostałe ostrzeżenia nadal są błędami testów. Aby powtórzyć test z fizyczną kamerą:
-
-```bash
-P3_GUI_TEST=1 P3_GUI_CAMERA=1 python -m pytest tests/gui_test.py -q
-```
-
-Dalsza lista kontroli sprzętowej (P1 i pozostałe systemy nie zostały sprawdzone):
-
-1. Otwórz fizyczną kamerę, potwierdź ciągłość klatek i zgodność RAW/64−273.15 z odczytem kursora.
-2. Sprawdź obrót, odbicie, skrajne piksele i zoom; odczyt tego samego sensora nie może zależeć od palety.
-3. Wykonaj NUC i przełącz HIGH/LOW. Sprawdź dalszy dopływ klatek i komunikaty błędów.
-4. Zamknij podczas transmisji i otwórz ponownie. Sprawdź dostęp do USB i synchronizację.
-5. Odłącz podczas transmisji, zamknij przez X. Powtórz, tym razem podłącz i poczekaj na automatyczny powrót obrazu bez zamykania okna.
-6. Zamknij podczas startu i po nieudanej inicjalizacji. Nie powinien pozostawać proces posiadający USB.
-7. Sprawdź eksport NPZ oraz działanie P1 i P3 osobno. Windows/macOS wymagają odrębnego sprawdzenia.
-
-Lock-in i X³ pozostają niezaimplementowane. Korekcja środowiskowa ma status eksperymentalny, a nagrywanie raportuje odrzucenia przy przeciążeniu. Dokładność absolutna korekcji i długie nagrania na sprzęcie nie zostały zweryfikowane.
-
-
-## Zapis obrazów
-
-| Format | Co jest zapisywane |
-| --- | --- |
-| JPEG | Aktualny kolorowy obraz, powiększenie bicubic 1–8× (domyślnie 3×), jakość 1–100 (domyślnie 95). Wygładzenie nie dodaje pomiarów sensora. |
-| PNG native RAW | Oryginalna macierz uint16, natywna orientacja, bez skalowania, palety, legendy i filtrów. Może wyglądać ciemno w zwykłej przeglądarce. |
-| PNG current color | Bezstratny zapis aktualnego RGB z orientacją i filtrami, w rozdzielczości sensora. |
-| NPZ (Save data) | Obie płaszczyzny kamery, metadane i definicja aktywnej palety użytkownika. Format do ponownego otwierania w aplikacji. |
-
-Opcja **Include legend** dołącza pasek po prawej stronie JPEG/kolorowego PNG; zmienia rozmiar wynikowego obrazu. Nie dotyczy PNG RAW. Eksport obejmuje całą klatkę, bez przycinania do widocznego zoomu, siatki pikseli czy znaczników min/max.
-
-## Import zamrożonej klatki
-
-Open RAW przyjmuje NPZ zapisane przez nowy viewer i wcześniejsze NPZ z tablicami `raw`, `brightness` oraz opcjonalnymi metadanymi. Open RAW przyjmuje również samodzielne NPY uint16 i natywne 16-bitowe PNG RAW. Nie zawierają kanału fabrycznej jasności ani metadanych; Factory brightness jest dla nich niedostępne. Import weryfikuje typy, rozmiar, jednostkę i ustawienia; nie używa pickle. Limit rozpakowanej zawartości wynosi 32 MB.
-
-Przywracane są zapisane ustawienia obrazu i orientacja. Paleta niestandardowa zapisana w NPZ jest dodawana do biblioteki; konflikt z istniejącą, inną paletą otrzymuje nową nazwę. Fabryczne palety nie są nadpisywane. Zapisane klatki wersji 1 z połączonym `detail` odtwarzają oba filtry CLAHE/DDE. Wersja 2 zapisuje je osobno.
-
-Import pozostaje zamrożony mimo napływu klatek lub utraty USB. Kamera może w tym czasie nadal przesyłać dane, ale nie sterujemy jej ustawieniami z trybu analizy pliku. Return to live przywraca akwizycję i automatyczne ponawianie połączenia. Filtr czasowy dla pojedynczej importowanej klatki nie ma historii do uśredniania.
-
-## Palety użytkownika
-
-W Palettes wybierz New, nadaj nazwę i dodaj co najmniej dwa punkty °C/#RRGGBB. Color otwiera wybór koloru, Update zmienia zaznaczony punkt, Remove usuwa punkt. Save and use sortuje temperatury i zapisuje preset. Temperatury nie mogą się powtarzać. Edit pozwala poprawiać preset; nowa nazwa tworzy kopię.
-
-`linear` interpoluje kanały RGB pomiędzy punktami. `steps` przypisuje kolor punktu aż do następnego progu (próg należy do nowego pasma). Poniżej minimum i powyżej maksimum używane są kolory końcowe. Legenda odwzorowuje tę samą funkcję co obraz.
-
-Format przenośnego JSON:
+`linear` interpolates RGB between stops. `steps` uses a stop's color until the next threshold, which belongs to the new band. Values outside the range use endpoint colors.
 
 ```json
 {
@@ -106,14 +57,63 @@ Format przenośnego JSON:
 }
 ```
 
-Biblioteka znajduje się w `$XDG_CONFIG_HOME/p3-thermal-studio/palettes.json`, a jeśli ta zmienna nie jest ustawiona — w `%APPDATA%/p3-thermal-studio/palettes.json` na Windows lub `~/.config/p3-thermal-studio/palettes.json`. Zapis jest atomowy. Uszkodzona biblioteka nie jest automatycznie nadpisywana; komunikat w panelu wskazuje błąd. Import/edycja istniejącej palety prosi o potwierdzenie zastąpienia. Nazwy fabryczne są zarezerwowane i chronione również w warstwie danych.
+By default, stops are absolute °C thresholds. **Auto-scale user palette to frame min/max** in View preserves relative stop spacing but stretches endpoints over the current finite temperature minimum/maximum. The legend follows that range. This does not edit the preset; the switch is saved in NPZ display settings. Turn it off to restore physical thresholds. CLAHE/DDE remain bypassed for custom palettes.
 
+The library lives in `$XDG_CONFIG_HOME/p3-thermal-studio/palettes.json`, otherwise `%APPDATA%/p3-thermal-studio/palettes.json`, otherwise `~/.config/p3-thermal-studio/palettes.json`. Saves are atomic. A corrupt library is reported and protected from automatic overwrite.
 
-## Siła DDE i legenda przy CLAHE
+## White hot / red peak and focus peaking
 
-W Filters zaznacz DDE i ustaw DDE strength (0–4, domyślnie 1.5). DDE wyostrza krawędzie, więc na gładkiej powierzchni efekt może być niewielki. Duże wartości mogą uwydatnić szum i obwódki. Porównuj na zamrożonej klatce, przełączając DDE przy stałej palecie i zakresie. CLAHE ma osobny przełącznik.
+**White hot / red peak** uses a grayscale ramp and a red upper tail covering approximately the top 5% of the displayed temperature range. Automatic range uses frame extrema; Fixed uses your limits. It bypasses temporal/local enhancements so red follows temperature rather than a CLAHE-enhanced edge. Ordinary White hot remains available separately. A uniform frame has no distinct hot region to highlight.
 
-Przy CLAHE/DDE oraz Factory brightness pasek jest opisany `°C min/max`. Przy każdym z pięciu pasm podaje dwie liczby: najniższą i najwyższą temperaturę RAW pikseli, które trafiły do tego pasma w wyświetlanej klatce. Kreska oznacza brak takich pikseli. Nie jest to jednoznaczna kalibracja koloru: zakresy mogą się pokrywać lub zmieniać kolejność. Dokładny odczyt konkretnego piksela pozostaje pod obrazem. Eksportowana legenda przedstawia te same zakresy, zapisane jako min/max obok paska.
+**Focus peaking**, in Filters, marks strong native thermal gradients in green. Lowering the threshold highlights more edges. Gaussian smoothing followed by Sobel gradients reduces isolated noise sensitivity. Peaking is a focusing aid, not autofocus or a calibrated sharpness measure. It changes neither RAW nor temperature readings and is excluded from export. Green marks overlay the palette, so use the ordinary legend for the underlying image.
 
+## Comparing two images
 
-Pełna instrukcja ROI, profili, izoterm, warstw emisyjności i nagrywania jest w [ANALYSIS.md](ANALYSIS.md).
+Select Compare and load A and B from NPZ, RAW PNG or uint16 NPY. Alternatively, Freeze A/B copies the displayed slot (the working frame when empty), and Live A/B connects that slot to camera acquisition. Freeze A + Live B gives a fixed reference against the current scene. A file import or another Freeze replaces only that slot. Live frames arrive even while the main working view is frozen or imported; its data is not replaced. Unplugging clears live slots while preserving saved/frozen references, and comparison acquisition retries automatically. Both images occupy the main image area and share the same temperature minimum/maximum and palette. User palettes are stretched to this shared range. Each image has independent zoom/pan, Fit and pixel inspection. Comparison data is separate from the live or imported working frame.
+
+Apply each file's saved correction optionally uses that file's radiometric settings. Equal-sized frames show mean/min/max **B − A** for matching native sensor coordinates. Different-sized frames remain visually comparable but have no pixelwise difference statistic. No registration or motion compensation is performed: physically align the scene before interpreting pixelwise differences. RGB JPEGs do not contain radiometric data and are not supported here.
+
+## Mirror and live correction
+
+Sensor → Remember mirror stores live-view mirror changes automatically in `settings-p3.json` or `settings-p1.json` alongside the palette library. It is enabled by default and applies on startup and Return to live. Disable it to clear the stored mirror. Offline project orientation stays with that project.
+
+RAW editing → Apply correction to live stream is an explicit experimental opt-in, off at startup. Also enable radiometric correction and Apply parameters. It is not recommended for unvalidated measurements; painted material masks stay at fixed sensor positions and do not follow moving objects. Disabling the live switch leaves frozen/offline correction available. See [the analysis guide](ANALYSIS.md) for model limitations.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| Camera not found | Check model, cable, USB IDs and permissions. Reconnect expedites automatic retry. |
+| Access denied / busy | Check udev/WinUSB and close other software using the camera. |
+| No display / Tk | Use a desktop session and a Python installation with system Tk support. |
+| Disconnected | The window stays open and retries. Offline imported frames remain visible. |
+| Invalid range | Enter finite values with maximum greater than minimum and apply. |
+| Unexpected colors | Check source, local enhancements, custom auto-scale and isotherms. Use Temperature with a fixed linear scale for direct comparisons. |
+| DDE seems inactive | Try a frozen frame with edges and increase strength. Flat areas need not change. |
+| LOW gives implausible temperatures | Return to HIGH; LOW radiometry has not been verified. |
+| Recording does not auto-open | Wait for draining; inspect writer error and frame count. Failed/empty recordings do not replace the image. |
+
+## Verification and limits
+
+```bash
+python -m pytest -q
+P3_GUI_TEST=1 python -m pytest tests/gui_test.py -q
+# Optional physical-camera variation:
+P3_GUI_TEST=1 P3_GUI_CAMERA=1 python -m pytest tests/gui_test.py -q
+```
+
+Headless tests cover protocol behavior, all 65536 encoded temperature values, orientation, picking, filters, palette ranges, exports, ROI geometry, radiometry, masks and sequence sampling. GUI tests cover drawing previews, embedded tools, plots, projects, automatic sequence loading, comparison, live-correction opt-in and simulated disconnect/reconnect. Tk tests isolate the configuration directory from user presets.
+
+Earlier hardware checks used **P3 firmware 00.00.02.18**: native 256×192 frames, about 25 FPS after startup, shutter commands, reopening after close, source switching and temperature inspection were observed. Startup took approximately five seconds. LOW showed around −34°C for a scene around 20–25°C in HIGH; NUC did not remove the difference. No arbitrary offset was fitted.
+
+Physical unplug detection was exercised previously; automatic reconnect in the same window is covered with a simulated device and still needs a separate physical reconnect check. P1 and other operating systems, long recordings, and absolute corrected-temperature accuracy require independent hardware verification. These UI changes do not establish new calibration evidence. Lock-in and X³ remain unavailable in the application.
+
+## Language, navigation and full-size help
+
+The two-row category strip directly above the right settings panel uses compact flat buttons with an active-section highlight. It scrolls horizontally when the window is narrow. Help and Settings live separately in the header; the redundant Analysis / RAW / Video button has been removed. The sidebar and the bottom image-control/readout panel both have automatic vertical and horizontal scrollbars. Drag the main vertical divider to change sidebar width; drag the horizontal divider between the image and its readouts to change their heights. Mouse wheel scrolls a control panel; Shift+wheel scrolls horizontally. Wheel over a thermal image still zooms. The application supports windows down to 520×360.
+
+Settings → Language offers English (default) and Polski; changes apply immediately and persist with model preferences. Internal source/ROI identifiers and portable NPZ/JSON data remain unchanged. User-entered material names and external driver diagnostics are not rewritten.
+
+Help (toolbar or F1) fills the main workspace with a scrollable guide. It documents Ctrl+X inspection, Ctrl+S project export, +/− zoom, Escape to cancel drawing and fit, F1 help, mouse wheel, drag, double click and standard keyboard focus navigation. In Compare, inspection/zoom/fit act on the last clicked image, defaulting to A. Ctrl+S saves the working project. Editable controls retain their normal cut/copy/text-entry behavior.
+
+The settings sidebar keeps its vertical scrollbar visible even when the selected page fits, so its location stays predictable. Other overflow bars remain automatic. Section buttons use a subtle one-pixel outline.

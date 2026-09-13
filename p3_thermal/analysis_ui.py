@@ -1,6 +1,6 @@
 """Measurement workspace: ROI, emissivity painting and radiometric video tools."""
 
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import colorchooser, ttk
 
 import copy
 import csv
@@ -12,6 +12,7 @@ import tkinter as tk
 import numpy as np
 
 from .analysis import EmissivityLayer, Radiometry, Region
+from .i18n import filedialog, messagebox, translate
 from .recording import Recorder, Sequence
 
 
@@ -27,7 +28,11 @@ def plot_window(parent, title, values, xlabel):
     ttk.Label(window, text=title).pack(fill="x")
     figure = Figure(figsize=(7, 4), dpi=100)
     axis = figure.add_subplot(111)
-    axis.set(xlabel=xlabel, ylabel="Temperature (°C)", title=title)
+    axis.set(
+        xlabel=translate(xlabel),
+        ylabel=translate("Temperature (°C)"),
+        title=translate(title),
+    )
     (line,) = axis.plot([], [])
     axis.grid(True, alpha=0.3)
     canvas = FigureCanvasTkAgg(figure, master=window)
@@ -37,6 +42,11 @@ def plot_window(parent, title, values, xlabel):
 
     def refresh():
         nonlocal timer
+        axis.set(
+            xlabel=translate(xlabel),
+            ylabel=translate("Temperature (°C)"),
+            title=translate(title),
+        )
         x, y = values()
         line.set_data(x, y)
         axis.relim()
@@ -96,19 +106,9 @@ class AnalysisWorkspace:
 
     @staticmethod
     def scroll_tab(tabs, title):
-        shell = ttk.Frame(tabs)
-        tabs.add(shell, text=title)
-        canvas = tk.Canvas(shell, highlightthickness=0, background="#18212e")
-        scrollbar = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        content = ttk.Frame(canvas, padding=12)
-        item = canvas.create_window(0, 0, window=content, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(item, width=e.width))
-        content.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        """Sidebar owns scrolling consistently for all tool pages."""
+        content = ttk.Frame(tabs.viewport, padding=12)
+        tabs.add(content, text=title)
         return content
 
     def stop_playback(self):
@@ -127,14 +127,17 @@ class AnalysisWorkspace:
     def _build_roi(self, panel):
         self.tool = tk.StringVar(value="Pan")
         ttk.Label(panel, text="Tool · draw on the main thermal image").pack(anchor="w")
-        tools = ttk.Combobox(
+        self.tool_box = ttk.Combobox(
             panel,
             values=("Pan", "Spot", "Rectangle", "Circle", "Line"),
             textvariable=self.tool,
             state="readonly",
         )
-        tools.pack(fill="x", pady=6)
-        tools.bind("<<ComboboxSelected>>", lambda e: self.set_tool(self.tool.get()))
+        self.tool_box.pack(fill="x", pady=6)
+        self.tool_box.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self.set_tool(self.app.translator.source_value(self.tool_box)),
+        )
         ttk.Label(
             panel,
             text="Spot: click. Rectangle / line: drag. Circle: center → radius.\nCoordinates and measurements remain attached to native sensor pixels.",
@@ -182,6 +185,18 @@ class AnalysisWorkspace:
         ).pack(anchor="w", pady=8)
 
     def _build_raw(self, panel):
+        self.live_correction = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel,
+            text="Apply correction to live stream (experimental)",
+            variable=self.live_correction,
+            command=self.changed,
+        ).pack(anchor="w", pady=6)
+        ttk.Label(
+            panel,
+            text="Live correction is not recommended for measurement: painted layers do not track moving objects.",
+            wraplength=440,
+        ).pack(anchor="w", pady=6)
         self.enabled = tk.BooleanVar()
         self.atmos_enabled = tk.BooleanVar()
         ttk.Checkbutton(
@@ -231,7 +246,7 @@ class AnalysisWorkspace:
         self.layers.pack(fill="x")
         self.layers.bind("<<TreeviewSelect>>", lambda e: self.layer_selected())
         self.layer_name, self.layer_eps = (
-            tk.StringVar(value="Material 1"),
+            tk.StringVar(value=translate("Material 1")),
             tk.StringVar(value="0.95"),
         )
         row = ttk.Frame(panel)
@@ -360,6 +375,7 @@ class AnalysisWorkspace:
                 return
             if not self.app.paused:
                 self.app.pause()
+        self.app.canvas.gesture_start = self.app.canvas.gesture_last = None
         self.app.canvas.tool = tool
         self.tool.set(tool)
         self.app.render()
@@ -389,10 +405,11 @@ class AnalysisWorkspace:
             if len(state.regions) >= 100:
                 return
             number = 1
+            base_name = translate(tool)
             names = {r.name for r in state.regions}
-            while f"{tool} {number}" in names:
+            while f"{base_name} {number}" in names:
                 number += 1
-            state.regions.append(Region(f"{tool} {number}", tool, start, end))
+            state.regions.append(Region(f"{base_name} {number}", tool, start, end))
             self.changed()
 
     def delete_roi(self):
@@ -571,7 +588,11 @@ class AnalysisWorkspace:
                 "",
                 "end",
                 iid=str(i),
-                values=(layer.name, layer.emissivity, layer.enabled),
+                values=(
+                    layer.name,
+                    layer.emissivity,
+                    translate("Yes" if layer.enabled else "No"),
+                ),
             )
         if selected and selected[0] in self.layers.get_children():
             self.layers.selection_set(selected[0])

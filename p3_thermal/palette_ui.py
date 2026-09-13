@@ -1,9 +1,10 @@
 """Editor for named absolute-temperature palettes; persistence lives in palettes.py."""
 
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import colorchooser, ttk
 
 import tkinter as tk
 
+from .i18n import filedialog, messagebox, translate
 from .palettes import TemperaturePalette, read_palette, write_json
 
 
@@ -11,7 +12,7 @@ class PalettePanel(ttk.Frame):
     """Create, edit, import, export and remove user presets without touching factory LUTs."""
 
     def __init__(self, parent, library, on_change):
-        super().__init__(parent, padding=12)
+        super().__init__(parent.viewport, padding=12)
         self.host = parent
         self.library, self.on_change = library, on_change
         self.selected = tk.StringVar()
@@ -62,7 +63,7 @@ class PalettePanel(ttk.Frame):
         dialog = self.host.editor("Palette editor")
         box = ttk.Frame(dialog, padding=16)
         box.pack(fill="both", expand=True)
-        name = tk.StringVar(value=palette.name if palette else "My palette")
+        name = tk.StringVar(value=palette.name if palette else translate("My palette"))
         ttk.Label(box, text="Name (new name creates a copy)").pack(anchor="w")
         ttk.Entry(box, textvariable=name, width=36).pack(fill="x", pady=6)
         mode = tk.StringVar(value=palette.interpolation if palette else "linear")

@@ -153,6 +153,8 @@ def snapshot_display_settings(metadata):
         "detail",
         "clahe",
         "dde_strength",
+        "custom_auto_scale",
+        "enhancements_enabled",
     ):
         if field in data:
             setattr(settings, field, data[field])
@@ -182,7 +184,10 @@ def snapshot_display_settings(metadata):
         or not 0 <= settings.dde_strength <= 4
     ):
         raise ValueError("Invalid display range or filter weight")
-    if not isinstance(settings.detail, bool) or not isinstance(settings.clahe, bool):
+    if not all(
+        isinstance(value, bool)
+        for value in (settings.detail, settings.clahe, settings.custom_auto_scale)
+    ):
         raise ValueError("Enhancement flags must be booleans")
     if metadata.get("snapshot_version", 1) == 1 and "clahe" not in data:
         settings.clahe = settings.detail
