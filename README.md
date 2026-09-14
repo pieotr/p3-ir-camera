@@ -1,27 +1,84 @@
 # P3 Thermal Studio
 
-A modular desktop application for **P3 (256 × 192)** and **P1 (160 × 120)** thermal cameras. The Tk/ttk interface combines live viewing, native pixel measurements, RAW editing and radiometric sequences in one window. The interface defaults to English. Settings → Language switches to Polish immediately and remembers the choice; developer documentation remains in English.
+**A desktop workspace for USB thermal imaging and radiometric analysis.**
 
-## Installation
+View live thermal images, inspect native sensor pixels, measure regions of interest, compare frames and record radiometric sequences. P3 Thermal Studio combines a Python USB driver with a modular Tk/ttk application, with English and Polish interfaces.
+
+![P3 Thermal Studio main workspace with a thermal image, temperature legend and display controls](screenshots/thermal-studio-workspace.png)
+
+*Current application running in demo mode with synthetic thermal data. All screenshots below also use demo data; no camera is required to explore the interface.*
+
+[Quick start](#quick-start) · [Screenshots](#screenshots) · [Features](#features-in-detail) · [Limitations](#camera-behavior-and-limitations) · [Documentation](#documentation-and-development)
+
+## At a glance
+
+| Capability | What you can do |
+| --- | --- |
+| Live viewing | Switch thermal sources and palettes, adjust contrast, zoom, rotate and mirror. |
+| Native measurements | Inspect temperature and RAW counts; add spots, rectangles, circles and line profiles. |
+| Radiometric files | Save RAW snapshots, reopen them for analysis and record/play back `.p3v` sequences. |
+| Comparison | Compare saved frames or a frozen reference against the live stream with a shared scale and B − A statistics. |
+| Image export | Export color PNG/JPEG images or native 16-bit RAW PNG data. |
+| Offline exploration | Use synthetic demo frames or open saved data without camera measurements. |
+
+### Supported cameras
+
+| Model | Native resolution | USB VID:PID | Verification status |
+| --- | --- | --- | --- |
+| P3 | 256 × 192 | `3474:45A2` | Previously tested on Linux; see gain limitations below. |
+| P1 | 160 × 120 | `3474:45C2` | Driver configuration available; hardware verification still needed. |
+
+## Screenshots
+
+### Region measurements
+
+Draw regions directly on the thermal image and inspect their minimum, maximum and mean temperatures. Line selections support profile plots, and region statistics can be exported to CSV.
+
+![Measurement workspace showing a rectangular hot-spot region, a line selection and temperature statistics](screenshots/thermal-studio-measurements.png)
+
+### Frame comparison
+
+Compare a frozen reference with the running demo stream. The comparison workspace provides separate A/B views, common display limits and temperature-difference statistics.
+
+![Comparison workspace showing frozen reference A alongside live demo frame B](screenshots/thermal-studio-compare.png)
+
+## Quick start
+
+Requires **Python 3.10+**, **Tk 8.6+** and a graphical desktop session. Run these commands from the repository root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m p3-viewer --demo
+```
+
+On Windows, activate the environment with `.venv\Scripts\Activate.ps1` in PowerShell. Demo mode generates synthetic thermal frames and requires no camera.
+
+### Connect a camera
 
 ```bash
 pip install -e .
 p3-viewer                  # P3 camera
 p3-viewer --model p1       # P1 camera
-p3-viewer --demo           # Synthetic frames, no camera required
-python p3_viewer.py --demo
+python p3_viewer.py        # Alternative entry point
 ```
 
-Python ≥ 3.10 and Tk 8.6+ are required. Project installation supplies Python dependencies, including NumPy, OpenCV, PyUSB and Matplotlib. Tk is a system component: install `python3-tk` on Debian/Ubuntu or `tk` on Arch, and use a Python interpreter built with Tk support. A graphical desktop session is required. OpenCV's Qt viewer is not used.
+Project installation supplies Python dependencies, including NumPy, OpenCV, PyUSB and Matplotlib. Tk is a system component: install `python3-tk` on Debian/Ubuntu or `tk` on Arch, and use a Python interpreter built with Tk support. A graphical desktop session is required. OpenCV's Qt viewer is not used.
 
-On Linux, put these rules in `/etc/udev/rules.d/99-p3-ir.rules`:
+### USB access on Linux
+
+Put these rules in `/etc/udev/rules.d/99-p3-ir.rules`:
 
 ```udev
 SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45c2", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45a2", TAG+="uaccess"
 ```
 
-Reload using `sudo udevadm control --reload-rules`, then reconnect the camera. These rules grant access to the active local desktop session. Windows requires a libusb/WinUSB backend; previous setups used Zadig with VID `3474`, PID `45C2` or `45A2`. P1 and Windows/macOS hardware operation need separate verification.
+Reload using `sudo udevadm control --reload-rules`, then reconnect the camera. These rules grant access to the active local desktop session.
+
+### Other platforms
+
+Windows requires a libusb/WinUSB backend; previous setups used Zadig with VID `3474`, PID `45C2` or `45A2`. P1 and Windows/macOS hardware operation need separate verification.
 
 ## Workspace
 
@@ -44,7 +101,7 @@ RAW 19000 → 23.725000 °C
 
 The six decimal places preserve all values in this encoding; they do not claim six-decimal sensor accuracy. Measurements never come from RGB or interpolated export images. Optional corrections are labeled as estimates and retain the original reading.
 
-## Display and analysis
+## Features in detail
 
 - Factory palettes: Inferno, Magma, Viridis, Turbo, Rainbow, White hot and Black hot.
 - Auto percentile adapts the display range using percentiles 1–99; Fixed uses a specified temperature range after Apply range.
@@ -56,6 +113,19 @@ The six decimal places preserve all values in this encoding; they do not claim s
 - Video records native radiometric frames to `.p3v`. After Stop recording drains the writer queue successfully, the completed sequence opens automatically for analysis. Empty or failed recordings do not replace the current image.
 
 Freeze stops display updates without stopping acquisition. Open RAW loads NPZ, native 16-bit PNG or uint16 NPY; imported frames remain editable and can be recolored and exported. Return to live resumes camera viewing. Save data preserves RAW and analysis settings in NPZ. Save image offers smooth JPEG, native RAW PNG or color PNG, with an optional legend for color images.
+
+### Comparison and advanced viewing
+
+- **Compare:** two saved images or a frozen reference against the live camera, with a shared scale, pixel inspection and B − A statistics. Each slot offers Open image, Freeze and Live. Freeze copies that slot or the working frame if empty; live comparison continues when the main view is frozen/offline.
+- **White hot / red peak:** grayscale with the upper end of the display scale in red. Disable CLAHE/DDE when interpreting red as temperature; enhanced edges can also become red.
+- **Custom palette scaling:** the View **Fixed scale** checkbox selects manual limits; otherwise the range uses frame percentiles. Older NPZ files with `custom_auto_scale` retain their explicit min/max behavior.
+- **Focus peaking:** adjustable green thermal-edge overlay in Filters, excluded from measurements and exports.
+- **Remember mirror:** Sensor saves live-view mirroring per camera model and restores it automatically; imported orientation does not replace this preference.
+- **Live correction:** RAW editing has an explicit experimental switch for applying enabled emissivity correction to the running stream. It starts disabled; material masks do not track motion.
+
+See [operation details](docs/OPERATIONS.md) for exact scale behavior, persistence and comparison limitations.
+
+Help opens a large scrollable panel in the main workspace and documents every registered shortcut, mouse navigation and all tool categories. In Compare, image shortcuts target the last clicked A/B image; text fields keep their standard editing shortcuts.
 
 ## Camera behavior and limitations
 
@@ -96,19 +166,10 @@ python -m pytest -q
 P3_GUI_TEST=1 python -m pytest tests/gui_test.py -q
 ```
 
-Tests are not part of application startup. `p3_viewer.py` is the entry point; application modules live in `p3_thermal`. The project is independent of the camera manufacturer and distributed under Apache 2.0. Original project: Joshua V. Dillon. Historical contributor acknowledgements are preserved in the archive.
+Tests are not part of application startup. `p3_viewer.py` is the entry point; application modules live in `p3_thermal`.
 
+## License and acknowledgements
 
+Distributed under the [Apache License 2.0](LICENSE). This project is independent of the camera manufacturer.
 
-## Additional viewing tools
-
-- **Compare:** two saved images or a frozen reference against the live camera, with a shared scale, pixel inspection and B − A statistics. Each slot offers Open image, Freeze and Live. Freeze copies that slot or the working frame if empty; live comparison continues when the main view is frozen/offline.
-- **White hot / red peak:** grayscale with the upper end of the display scale in red. Disable CLAHE/DDE when interpreting red as temperature; enhanced edges can also become red.
-- **Custom palette scaling:** the View **Fixed scale** checkbox selects manual limits; otherwise the range uses frame percentiles. Older NPZ files with `custom_auto_scale` retain their explicit min/max behavior.
-- **Focus peaking:** adjustable green thermal-edge overlay in Filters, excluded from measurements and exports.
-- **Remember mirror:** Sensor saves live-view mirroring per camera model and restores it automatically; imported orientation does not replace this preference.
-- **Live correction:** RAW editing has an explicit experimental switch for applying enabled emissivity correction to the running stream. It starts disabled; material masks do not track motion.
-
-See [operation details](docs/OPERATIONS.md) for exact scale behavior, persistence and comparison limitations.
-
-Help opens a large scrollable panel in the main workspace and documents every registered shortcut, mouse navigation and all tool categories. In Compare, image shortcuts target the last clicked A/B image; text fields keep their standard editing shortcuts.
+Original project by **Joshua V. Dillon**; current package authors include **Piotr Przybył** and **Joshua V. Dillon**. Historical contributor acknowledgements are preserved in the [archived demo documentation](docs/LEGACY_DEMO.md).
