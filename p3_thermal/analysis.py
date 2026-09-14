@@ -35,7 +35,10 @@ class Radiometry:
             self.distance,
             self.humidity,
         ]
-        if not np.isfinite(values).all():
+        if (
+            any(type(v) not in (int, float) for v in values)
+            or not np.isfinite(values).all()
+        ):
             raise ValueError("Radiometry parameters must be finite")
         if not 0.01 <= self.emissivity <= 1 or not -100 <= self.reflected <= 1000:
             raise ValueError("Emissivity: 0.01–1; reflected temperature: −100–1000 °C")
@@ -97,15 +100,13 @@ class Region:
             return np.rint(np.linspace(y0, y1, n)).astype(int), np.rint(
                 np.linspace(x0, x1, n)
             ).astype(int)
-        y, x = np.indices(shape)
         if self.kind == "Rectangle":
-            mask = (
-                (x >= min(x0, x1))
-                & (x <= max(x0, x1))
-                & (y >= min(y0, y1))
-                & (y <= max(y0, y1))
-            )
-        elif self.kind == "Circle":
+            y, x = np.mgrid[
+                min(y0, y1) : max(y0, y1) + 1, min(x0, x1) : max(x0, x1) + 1
+            ]
+            return y.ravel(), x.ravel()
+        if self.kind == "Circle":
+            y, x = np.ogrid[:h, :w]
             radius = np.hypot(x1 - x0, y1 - y0)
             mask = (x - x0) ** 2 + (y - y0) ** 2 <= radius**2
         else:
@@ -239,7 +240,11 @@ class AnalysisState:
             result.regions.append(region)
         for item in data.get("layers", []):
             if (
-                len(result.layers) >= 32
+                not isinstance(item, dict)
+                or not isinstance(item.get("name"), str)
+                or type(item.get("enabled", True)) is not bool
+                or type(item.get("emissivity")) not in (int, float)
+                or len(result.layers) >= 32
                 or tuple(item["shape"]) != shape
                 or not 0.01 <= item["emissivity"] <= 1
             ):
@@ -261,7 +266,9 @@ class AnalysisState:
                 )
             )
         iso = data.get("isotherm", {})
-        result.isotherm = bool(iso.get("enabled", False))
+        if not isinstance(iso, dict) or type(iso.get("enabled", False)) is not bool:
+            raise ValueError("Invalid isotherm switch")
+        result.isotherm = iso.get("enabled", False)
         result.iso_min, result.iso_max = (
             float(iso.get("minimum", 50)),
             float(iso.get("maximum", 1000)),

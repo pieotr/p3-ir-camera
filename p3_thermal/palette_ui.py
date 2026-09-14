@@ -1,11 +1,13 @@
 """Editor for named absolute-temperature palettes; persistence lives in palettes.py."""
 
-from tkinter import colorchooser, ttk
+from tkinter import ttk
 
 import tkinter as tk
 
+from .color_ui import ColorWheel
 from .i18n import filedialog, messagebox, translate
 from .palettes import TemperaturePalette, read_palette, write_json
+from .widgets import button, caption
 
 
 class PalettePanel(ttk.Frame):
@@ -16,7 +18,7 @@ class PalettePanel(ttk.Frame):
         self.host = parent
         self.library, self.on_change = library, on_change
         self.selected = tk.StringVar()
-        ttk.Label(self, text="User temperature palettes").pack(anchor="w")
+        caption(self, "User temperature palettes")
         self.listing = ttk.Combobox(
             self, textvariable=self.selected, state="readonly", width=23
         )
@@ -29,12 +31,14 @@ class PalettePanel(ttk.Frame):
             ("Export JSON…", self.export_file),
             ("Delete user palette", self.delete),
         ]:
-            ttk.Button(self, text=label, command=command).pack(fill="x", pady=3)
-        ttk.Label(
+            button(self, label, command, fill="x", pady=3)
+        caption(
             self,
-            text="Define temperature/color points in °C.\nLinear gradients or discrete bands.\nFactory palettes are protected.\n\nAbsolute maps use temperature data;\nAGC, CLAHE and DDE are bypassed.",
+            "Define temperature/color points in °C.\nLinear gradients or discrete bands.\nFactory palettes are protected.\n\nView controls the display range. CLAHE and DDE also apply to custom colors.",
             wraplength=290,
-        ).pack(anchor="w", pady=12)
+            anchor="w",
+            pady=12,
+        )
         if self.library.load_error:
             ttk.Label(
                 self,
@@ -64,7 +68,7 @@ class PalettePanel(ttk.Frame):
         box = ttk.Frame(dialog, padding=16)
         box.pack(fill="both", expand=True)
         name = tk.StringVar(value=palette.name if palette else translate("My palette"))
-        ttk.Label(box, text="Name (new name creates a copy)").pack(anchor="w")
+        caption(box, "Name (new name creates a copy)")
         ttk.Entry(box, textvariable=name, width=36).pack(fill="x", pady=6)
         mode = tk.StringVar(value=palette.interpolation if palette else "linear")
         ttk.Combobox(
@@ -93,12 +97,15 @@ class PalettePanel(ttk.Frame):
         ttk.Entry(row, textvariable=temp, width=12).pack(side="left")
         ttk.Entry(row, textvariable=color, width=12).pack(side="left", padx=5)
 
-        def choose():
-            result = colorchooser.askcolor(color.get(), parent=dialog)[1]
-            if result:
-                color.set(result)
+        wheel = ColorWheel(box, color)
 
-        ttk.Button(row, text="Color…", command=choose).pack(side="left")
+        def choose():
+            if wheel.winfo_manager():
+                wheel.pack_forget()
+            else:
+                wheel.pack(after=row, fill="x", pady=8)
+
+        button(row, "Color…", choose, side="left")
 
         def change(replace=False):
             try:
@@ -121,13 +128,9 @@ class PalettePanel(ttk.Frame):
 
         buttons = ttk.Frame(box)
         buttons.pack(fill="x", pady=6)
-        ttk.Button(buttons, text="Add", command=change).pack(side="left")
-        ttk.Button(buttons, text="Update", command=lambda: change(True)).pack(
-            side="left"
-        )
-        ttk.Button(
-            buttons, text="Remove", command=lambda: tree.delete(*tree.selection())
-        ).pack(side="left")
+        button(buttons, "Add", change, side="left")
+        button(buttons, "Update", lambda: change(True), side="left")
+        button(buttons, "Remove", lambda: tree.delete(*tree.selection()), side="left")
 
         def selected(event):
             if tree.selection():
@@ -174,7 +177,7 @@ class PalettePanel(ttk.Frame):
             except (ValueError, OSError) as exc:
                 messagebox.showerror("Cannot save palette", str(exc), parent=dialog)
 
-        ttk.Button(box, text="Save and use", command=save).pack(fill="x", pady=8)
+        button(box, "Save and use", save, fill="x", pady=8)
 
     def import_file(self):
         path = filedialog.askopenfilename(filetypes=[("Temperature palette", "*.json")])

@@ -4,8 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import json
+import math
+import zipfile
+import zlib
 
 import numpy as np
+
+from .storage import atomic_output
 
 
 def save_snapshot(path, frame, metadata, corrected_celsius=None):
@@ -20,7 +25,7 @@ def save_snapshot(path, frame, metadata, corrected_celsius=None):
     extra = (
         {} if corrected_celsius is None else {"corrected_celsius": corrected_celsius}
     )
-    with Path(path).open("wb") as stream:
+    with atomic_output(path) as stream:
         np.savez_compressed(
             stream,
             raw=frame.raw,
@@ -32,15 +37,49 @@ def save_snapshot(path, frame, metadata, corrected_celsius=None):
 
 def load_snapshot(path):
     """Load validated native planes without pickle; legacy NPZ snapshots are accepted."""
-    import zipfile
+    try:
+        return _load_snapshot(path)
+    except (
+        zipfile.BadZipFile,
+        EOFError,
+        zlib.error,
+        NotImplementedError,
+        RuntimeError,
+    ) as exc:
+        raise ValueError(f"Invalid NPZ snapshot: {exc}") from exc
 
+
+def _load_snapshot(path):
     from .acquisition import Frame
 
     if not zipfile.is_zipfile(path):
         raise ValueError("Not a valid NPZ snapshot")
     with zipfile.ZipFile(path) as archive:
-        if sum(item.file_size for item in archive.infolist()) > 32_000_000:
-            raise ValueError("Snapshot exceeds 32 MB uncompressed")
+        entries = archive.infolist()
+        if len(entries) > 16 or sum(item.file_size for item in entries) > 32_000_000:
+            raise ValueError("Snapshot exceeds supported size")
+        names = [item.filename for item in entries]
+        if len(names) != len(set(names)) or not {"raw.npy", "brightness.npy"} <= set(
+            names
+        ):
+            raise ValueError("Missing or duplicate snapshot arrays")
+        for item in entries:
+            with archive.open(item) as stream:
+                version = np.lib.format.read_magic(stream)
+                readers = {
+                    (1, 0): np.lib.format.read_array_header_1_0,
+                    (2, 0): np.lib.format.read_array_header_2_0,
+                }
+                if version not in readers:
+                    raise ValueError("Unsupported array header version")
+                shape, _, dtype = readers[version](stream)
+                size = math.prod(shape) * dtype.itemsize
+                if (
+                    dtype.hasobject
+                    or size > item.file_size - stream.tell()
+                    or len(shape) > 2
+                ):
+                    raise ValueError("Invalid array size or object data")
     with np.load(path, allow_pickle=False) as data:
         raw = data["raw"]
         brightness = data["brightness"]
@@ -86,7 +125,8 @@ def save_image(path, frame, rgb, kind="jpeg", scale=3, quality=95, legend=None):
     success, encoded = cv2.imencode(extension, image, parameters)
     if not success:
         raise OSError("Image encoder failed")
-    Path(path).write_bytes(encoded.tobytes())
+    with atomic_output(path) as stream:
+        stream.write(encoded.tobytes())
 
 
 def append_legend(image, legend):
@@ -143,19 +183,7 @@ def snapshot_display_settings(metadata):
     if not isinstance(data, dict):
         raise ValueError("Display metadata must be an object")
     settings = DisplaySettings()
-    for field in (
-        "mode",
-        "palette",
-        "range_mode",
-        "minimum",
-        "maximum",
-        "alpha",
-        "detail",
-        "clahe",
-        "dde_strength",
-        "custom_auto_scale",
-        "enhancements_enabled",
-    ):
+    for field in settings.__dataclass_fields__:
         if field in data:
             setattr(settings, field, data[field])
     if settings.mode not in (
@@ -186,7 +214,13 @@ def snapshot_display_settings(metadata):
         raise ValueError("Invalid display range or filter weight")
     if not all(
         isinstance(value, bool)
-        for value in (settings.detail, settings.clahe, settings.custom_auto_scale)
+        for value in (
+            settings.detail,
+            settings.clahe,
+            settings.custom_auto_scale,
+            settings.enhance_custom_palette,
+            settings.enhancements_enabled,
+        )
     ):
         raise ValueError("Enhancement flags must be booleans")
     if metadata.get("snapshot_version", 1) == 1 and "clahe" not in data:

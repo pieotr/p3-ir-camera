@@ -44,7 +44,7 @@ Image options capture the frame when opened, so live updates cannot change the s
 
 ## User palettes and automatic scale
 
-Palettes → New opens the embedded editor. Provide a name and 2–64 strictly increasing finite temperature/color stops. Color opens a picker; Add/Update/Remove edit stops. Save and use persists the preset. A different name creates a copy. Factory palette names are protected in both UI and data validation.
+Palettes → New opens the embedded editor. Provide a name and 2–64 strictly increasing finite temperature/color stops. Color toggles an embedded HSV wheel: drag to select hue/saturation, adjust Brightness, or enter #RRGGBB directly. Selecting an existing stop synchronizes the wheel; Add/Update commits the chosen color to that stop. Remove deletes the selected stop. Save and use persists the preset. A different name creates a copy. Factory palette names are protected in both UI and data validation.
 
 `linear` interpolates RGB between stops. `steps` uses a stop's color until the next threshold, which belongs to the new band. Values outside the range use endpoint colors.
 
@@ -57,13 +57,13 @@ Palettes → New opens the embedded editor. Provide a name and 2–64 strictly i
 }
 ```
 
-By default, stops are absolute °C thresholds. **Auto-scale user palette to frame min/max** in View preserves relative stop spacing but stretches endpoints over the current finite temperature minimum/maximum. The legend follows that range. This does not edit the preset; the switch is saved in NPZ display settings. Turn it off to restore physical thresholds. CLAHE/DDE remain bypassed for custom palettes.
+Palette stops define relative spacing within the selected display range. With **Fixed scale**, the entered endpoints are used; otherwise Auto uses percentiles 1–99. To use the preset's original °C scale, select Temperature, enter its first and last stop as Fixed limits, and disable CLAHE/DDE. Display colors use a 256-entry ramp; native temperature readings retain full precision. Older snapshots containing `custom_auto_scale=true` use frame extrema instead of percentiles, without modifying their preset. CLAHE/DDE apply to custom palettes and replace the linear legend with observed temperature bands.
 
 The library lives in `$XDG_CONFIG_HOME/p3-thermal-studio/palettes.json`, otherwise `%APPDATA%/p3-thermal-studio/palettes.json`, otherwise `~/.config/p3-thermal-studio/palettes.json`. Saves are atomic. A corrupt library is reported and protected from automatic overwrite.
 
 ## White hot / red peak and focus peaking
 
-**White hot / red peak** uses a grayscale ramp and a red upper tail covering approximately the top 5% of the displayed temperature range. Automatic range uses frame extrema; Fixed uses your limits. It bypasses temporal/local enhancements so red follows temperature rather than a CLAHE-enhanced edge. Ordinary White hot remains available separately. A uniform frame has no distinct hot region to highlight.
+**White hot / red peak** uses grayscale and a red upper tail covering approximately the top 5% of the display range. Auto uses percentiles; Fixed uses your limits. With CLAHE/DDE enabled, red can mark enhanced edges rather than the hottest native samples. Pixel readouts and observed temperature bands remain authoritative. Ordinary White hot remains available separately.
 
 **Focus peaking**, in Filters, marks strong native thermal gradients in green. Lowering the threshold highlights more edges. Gaussian smoothing followed by Sobel gradients reduces isolated noise sensitivity. Peaking is a focusing aid, not autofocus or a calibrated sharpness measure. It changes neither RAW nor temperature readings and is excluded from export. Green marks overlay the palette, so use the ordinary legend for the underlying image.
 

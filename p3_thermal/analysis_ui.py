@@ -14,6 +14,7 @@ import numpy as np
 from .analysis import EmissivityLayer, Radiometry, Region
 from .i18n import filedialog, messagebox, translate
 from .recording import Recorder, Sequence
+from .widgets import button, caption, checkbox
 
 
 def plot_window(parent, title, values, xlabel):
@@ -25,14 +26,9 @@ def plot_window(parent, title, values, xlabel):
     from matplotlib.figure import Figure
 
     window = parent.editor("Profile")
-    ttk.Label(window, text=title).pack(fill="x")
+    caption(window, title, fill="x")
     figure = Figure(figsize=(7, 4), dpi=100)
     axis = figure.add_subplot(111)
-    axis.set(
-        xlabel=translate(xlabel),
-        ylabel=translate("Temperature (°C)"),
-        title=translate(title),
-    )
     (line,) = axis.plot([], [])
     axis.grid(True, alpha=0.3)
     canvas = FigureCanvasTkAgg(figure, master=window)
@@ -65,11 +61,7 @@ def plot_window(parent, title, values, xlabel):
             window.after_cancel(timer)
 
     window.bind("<Destroy>", destroyed)
-    ttk.Button(
-        window,
-        text="Close profile",
-        command=lambda: (close(), parent.select("Measurements")),
-    ).pack(fill="x")
+    button(window, "Close profile", lambda: (close(), parent.select("Measurements")))
     refresh()
     return window
 
@@ -78,6 +70,8 @@ class AnalysisWorkspace:
     def __init__(self, app):
         self.app = app
         self.window = app.root
+        self._roi_frame = None
+        self._roi_revision = -1
         self.pending_recording = None
         self.undo = []
         self.sequence = None
@@ -126,7 +120,7 @@ class AnalysisWorkspace:
 
     def _build_roi(self, panel):
         self.tool = tk.StringVar(value="Pan")
-        ttk.Label(panel, text="Tool · draw on the main thermal image").pack(anchor="w")
+        caption(panel, "Tool · draw on the main thermal image")
         self.tool_box = ttk.Combobox(
             panel,
             values=("Pan", "Spot", "Rectangle", "Circle", "Line"),
@@ -138,10 +132,12 @@ class AnalysisWorkspace:
             "<<ComboboxSelected>>",
             lambda e: self.set_tool(self.app.translator.source_value(self.tool_box)),
         )
-        ttk.Label(
+        caption(
             panel,
-            text="Spot: click. Rectangle / line: drag. Circle: center → radius.\nCoordinates and measurements remain attached to native sensor pixels.",
-        ).pack(anchor="w", pady=6)
+            "Spot: click. Rectangle / line: drag. Circle: center → radius.\nCoordinates and measurements remain attached to native sensor pixels.",
+            anchor="w",
+            pady=6,
+        )
         self.rois = ttk.Treeview(
             panel,
             columns=("name", "min", "max", "mean", "count"),
@@ -159,51 +155,56 @@ class AnalysisWorkspace:
             ("Line profile…", self.line_profile),
             ("Export ROI CSV…", self.roi_csv),
         ):
-            ttk.Button(row, text=name, command=fn).pack(side="left", padx=3)
+            button(row, name, fn, side="left", padx=3)
         self.iso_enabled = tk.BooleanVar()
         self.iso_min = tk.StringVar(value="50")
         self.iso_max = tk.StringVar(value="1000")
         self.iso_color = "#FF00FF"
-        ttk.Checkbutton(
+        checkbox(
             panel,
-            text="Isotherm (inclusive temperature interval)",
-            variable=self.iso_enabled,
-            command=self.apply_isotherm,
-        ).pack(anchor="w", pady=(25, 6))
+            "Isotherm (inclusive temperature interval)",
+            self.iso_enabled,
+            self.apply_isotherm,
+            anchor="w",
+            pady=(25, 6),
+        )
         for label, var in (("Minimum °C", self.iso_min), ("Maximum °C", self.iso_max)):
-            ttk.Label(panel, text=label).pack(anchor="w")
+            caption(panel, label)
             ttk.Entry(panel, textvariable=var).pack(fill="x", pady=3)
-        ttk.Button(panel, text="Isotherm color…", command=self.choose_iso_color).pack(
-            fill="x", pady=5
-        )
-        ttk.Button(panel, text="Apply interval", command=self.apply_isotherm).pack(
-            fill="x"
-        )
-        ttk.Label(
+        button(panel, "Isotherm color…", self.choose_iso_color, fill="x", pady=5)
+        button(panel, "Apply interval", self.apply_isotherm)
+        caption(
             panel,
-            text="For 'above 50°C', set minimum 50 and a sufficiently high maximum.\nColored isotherms are an overlay; the palette legend describes the base image.",
-        ).pack(anchor="w", pady=8)
+            "For 'above 50°C', set minimum 50 and a sufficiently high maximum.\nColored isotherms are an overlay; the palette legend describes the base image.",
+            anchor="w",
+            pady=8,
+        )
 
     def _build_raw(self, panel):
         self.live_correction = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        checkbox(
             panel,
-            text="Apply correction to live stream (experimental)",
-            variable=self.live_correction,
-            command=self.changed,
-        ).pack(anchor="w", pady=6)
-        ttk.Label(
+            "Apply correction to live stream (experimental)",
+            self.live_correction,
+            self.changed,
+            anchor="w",
+            pady=6,
+        )
+        caption(
             panel,
-            text="Live correction is not recommended for measurement: painted layers do not track moving objects.",
+            "Live correction is not recommended for measurement: painted layers do not track moving objects.",
             wraplength=440,
-        ).pack(anchor="w", pady=6)
+            anchor="w",
+            pady=6,
+        )
         self.enabled = tk.BooleanVar()
         self.atmos_enabled = tk.BooleanVar()
-        ttk.Checkbutton(
+        checkbox(
             panel,
-            text="Enable experimental radiometric correction",
-            variable=self.enabled,
-        ).pack(anchor="w")
+            "Enable experimental radiometric correction",
+            self.enabled,
+            anchor="w",
+        )
         self.params = {}
         grid = ttk.Frame(panel)
         grid.pack(fill="x", pady=6)
@@ -222,21 +223,29 @@ class AnalysisWorkspace:
             ttk.Entry(grid, textvariable=var, width=15).grid(
                 row=index, column=1, sticky="ew", pady=3
             )
-        ttk.Checkbutton(
+        checkbox(
             panel,
-            text="Apply distance / humidity model (generic LWIR)",
-            variable=self.atmos_enabled,
-        ).pack(anchor="w")
-        ttk.Button(
-            panel, text="Apply radiometric parameters", command=self.apply_radiometry
-        ).pack(fill="x", pady=6)
+            "Apply distance / humidity model (generic LWIR)",
+            self.atmos_enabled,
+            anchor="w",
+        )
+        button(
+            panel,
+            "Apply radiometric parameters",
+            self.apply_radiometry,
+            fill="x",
+            pady=6,
+        )
         self.correction_info = tk.StringVar(value="Original sensor temperatures")
         ttk.Label(panel, textvariable=self.correction_info, wraplength=440).pack(
             anchor="w"
         )
-        ttk.Label(
-            panel, text="Emissivity layers · later layers override earlier ones"
-        ).pack(anchor="w", pady=(16, 4))
+        caption(
+            panel,
+            "Emissivity layers · later layers override earlier ones",
+            anchor="w",
+            pady=(16, 4),
+        )
         self.layers = ttk.Treeview(
             panel, columns=("name", "eps", "enabled"), show="headings", height=5
         )
@@ -253,8 +262,8 @@ class AnalysisWorkspace:
         row.pack(fill="x", pady=4)
         ttk.Entry(row, textvariable=self.layer_name, width=20).pack(side="left")
         ttk.Entry(row, textvariable=self.layer_eps, width=8).pack(side="left", padx=5)
-        ttk.Button(row, text="Add layer", command=self.add_layer).pack(side="left")
-        ttk.Button(row, text="Update ε", command=self.update_layer).pack(side="left")
+        button(row, "Add layer", self.add_layer, side="left")
+        button(row, "Update ε", self.update_layer, side="left")
         row = ttk.Frame(panel)
         row.pack(fill="x", pady=4)
         for label, fn in (
@@ -264,62 +273,51 @@ class AnalysisWorkspace:
             ("Move down", lambda: self.move_layer(1)),
             ("Undo stroke", self.undo_stroke),
         ):
-            ttk.Button(row, text=label, command=fn).pack(fill="x", pady=2)
+            button(row, label, fn, fill="x", pady=2)
         row = ttk.Frame(panel)
         row.pack(fill="x", pady=4)
-        ttk.Button(row, text="Brush", command=lambda: self.set_tool("Brush")).pack(
-            side="left"
-        )
-        ttk.Button(row, text="Eraser", command=lambda: self.set_tool("Eraser")).pack(
-            side="left"
-        )
-        ttk.Button(row, text="Pan", command=lambda: self.set_tool("Pan")).pack(
-            side="left"
-        )
-        ttk.Label(row, text="Radius px:").pack(side="left")
+        button(row, "Brush", lambda: self.set_tool("Brush"), side="left")
+        button(row, "Eraser", lambda: self.set_tool("Eraser"), side="left")
+        button(row, "Pan", lambda: self.set_tool("Pan"), side="left")
+        caption(row, "Radius px:", side="left")
         self.radius = tk.StringVar(value="4")
         ttk.Spinbox(row, from_=1, to=100, textvariable=self.radius, width=5).pack(
             side="left"
         )
         self.show_mask = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        checkbox(
             panel,
-            text="Show active layer mask while painting",
-            variable=self.show_mask,
-            command=self.changed,
-        ).pack(anchor="w")
-        ttk.Button(
-            panel, text="Save RAW + correction project…", command=self.app.export
-        ).pack(fill="x", pady=5)
-        ttk.Label(
+            "Show active layer mask while painting",
+            self.show_mask,
+            self.changed,
+            anchor="w",
+        )
+        button(
+            panel, "Save RAW + correction project…", self.app.export, fill="x", pady=5
+        )
+        caption(
             panel,
-            text="Correction is a broad-band estimate, not a calibrated P3 model.\nIt cannot remove solar reflections or recover missing/invalid sensor information.\nPainting freezes live view. RAW is never overwritten; invalid results are marked.",
+            "Correction is a broad-band estimate, not a calibrated P3 model.\nIt cannot remove solar reflections or recover missing/invalid sensor information.\nPainting freezes live view. RAW is never overwritten; invalid results are marked.",
             wraplength=440,
-        ).pack(anchor="w", pady=6)
+            anchor="w",
+            pady=6,
+        )
 
     def _build_video(self, panel):
-        ttk.Label(
-            panel, text="Recording rate (sampling captured frames, not sensor control)"
-        ).pack(anchor="w")
+        caption(panel, "Recording rate (sampling captured frames, not sensor control)")
         self.fps = tk.StringVar(value="25")
         ttk.Combobox(
             panel, values=("1", "2", "5", "10", "15", "25"), textvariable=self.fps
         ).pack(fill="x", pady=6)
         self.experimental = tk.BooleanVar()
-        ttk.Checkbutton(
-            panel,
-            text="Allow experimental rates 0.1–240 fps",
-            variable=self.experimental,
-        ).pack(anchor="w")
+        checkbox(
+            panel, "Allow experimental rates 0.1–240 fps", self.experimental, anchor="w"
+        )
         row = ttk.Frame(panel)
         row.pack(fill="x", pady=8)
-        ttk.Button(row, text="Record…", command=self.start_recording).pack(side="left")
-        ttk.Button(row, text="Stop recording", command=self.stop_recording).pack(
-            side="left"
-        )
-        ttk.Button(row, text="Open sequence…", command=self.open_sequence).pack(
-            side="left"
-        )
+        button(row, "Record…", self.start_recording, side="left")
+        button(row, "Stop recording", self.stop_recording, side="left")
+        button(row, "Open sequence…", self.open_sequence, side="left")
         self.record_info = tk.StringVar(value="No recording")
         ttk.Label(panel, textvariable=self.record_info, wraplength=440).pack(
             anchor="w", pady=8
@@ -339,12 +337,14 @@ class AnalysisWorkspace:
             ("Frame ▶", lambda: self.step(1)),
             ("Temperature over time…", self.time_profile),
         ):
-            ttk.Button(row, text=label, command=fn).pack(fill="x", pady=2)
-        ttk.Label(
+            button(row, label, fn, fill="x", pady=2)
+        caption(
             panel,
-            text="Playback preserves real frame timestamps and allows recoloring, ROI and correction.\nTime profile uses the selected ROI (or the full frame).\nRates above the camera output never synthesize additional measurements.",
+            "Playback preserves real frame timestamps and allows recoloring, ROI and correction.\nTime profile uses the selected ROI (or the full frame).\nRates above the camera output never synthesize additional measurements.",
             wraplength=440,
-        ).pack(anchor="w", pady=12)
+            anchor="w",
+            pady=12,
+        )
 
     def layer_selected(self):
         index = self.selected_layer()
@@ -599,20 +599,29 @@ class AnalysisWorkspace:
         self.update_values()
 
     def update_values(self):
-        selected = self.rois.selection()
-        self.rois.delete(*self.rois.get_children())
-        if self.app.measured is not None:
-            for i, region in enumerate(self.app.analysis.regions):
-                stats = region.statistics(self.app.measured)
-                values = [
-                    "—" if stats[key] is None else f"{stats[key]:.3f}"
-                    for key in ("min", "max", "mean")
-                ]
-                self.rois.insert(
-                    "", "end", iid=str(i), values=(region.name, *values, stats["count"])
-                )
-        if selected and selected[0] in self.rois.get_children():
-            self.rois.selection_set(selected[0])
+        if (
+            self.app.measured is not self._roi_frame
+            or self.app.analysis.revision != self._roi_revision
+        ):
+            self._roi_frame = self.app.measured
+            self._roi_revision = self.app.analysis.revision
+            rows = []
+            if self._roi_frame is not None:
+                for region in self.app.analysis.regions:
+                    stats = region.statistics(self._roi_frame)
+                    values = [
+                        "—" if stats[key] is None else f"{stats[key]:.3f}"
+                        for key in ("min", "max", "mean")
+                    ]
+                    rows.append((region.name, *values, stats["count"]))
+            for iid in self.rois.get_children()[len(rows) :]:
+                self.rois.delete(iid)
+            for index, values in enumerate(rows):
+                iid = str(index)
+                if self.rois.exists(iid):
+                    self.rois.item(iid, values=values)
+                else:
+                    self.rois.insert("", "end", iid=iid, values=values)
         recorder = self.app.recorder
         if recorder:
             self.record_info.set(
@@ -712,7 +721,11 @@ class AnalysisWorkspace:
 
     def step(self, direction):
         self.stop_playback()
-        self.position.set(max(0, self.position.get() + direction))
+        if self.sequence is None:
+            return
+        self.position.set(
+            min(len(self.sequence.index) - 1, max(0, self.position.get() + direction))
+        )
         self.seek(self.position.get())
 
     def play(self):
@@ -758,11 +771,11 @@ class AnalysisWorkspace:
         def work():
             try:
                 means = []
-                for i in range(len(sequence.index)):
+                for frame in sequence.frames():
                     if self.app.closing or self.profile_cancel.is_set():
                         self.plot_jobs.put(ValueError("Analysis cancelled"))
                         return
-                    measured = state.celsius(sequence.frame(i).raw)
+                    measured = state.celsius(frame.raw)
                     values = (
                         measured[region.samples(measured.shape)] if region else measured
                     )

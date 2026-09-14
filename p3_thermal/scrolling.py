@@ -56,9 +56,8 @@ class ScrollArea(ttk.Frame):
         view_width = max(1, width - (bar_width if y_needed else 0))
         view_height = max(1, height - (bar_height if x_needed else 0))
         content_width = max(view_width, requested_width)
-        self.viewport.itemconfigure(
-            self.item, width=content_width, height=requested_height
-        )
+        # Let Tk track requested height: editors populate after they are selected.
+        self.viewport.itemconfigure(self.item, width=content_width, height=0)
         if self.horizontal_only:
             self.viewport.configure(height=requested_height)
             view_height = requested_height

@@ -14,15 +14,16 @@ from .analysis import AnalysisState
 from .canvas import ThermalCanvas
 from .export import load_raw_image, load_snapshot
 from .i18n import filedialog, messagebox
-from .palettes import TemperaturePalette
 from .processing import (
     PALETTES,
     DisplaySettings,
     Processor,
     legend_colors,
     orient,
+    sensor_coordinates,
     temperature,
 )
+from .widgets import button, caption, checkbox
 
 
 class ComparisonPanel(ttk.Frame):
@@ -38,7 +39,7 @@ class ComparisonPanel(ttk.Frame):
         self.sources = ["saved", "saved"]
         self.latest_live = None
         self.processors = [Processor(), Processor()]
-        self._coordinates = {}
+        self._legend_key = None
         self.canvases = []
         self.image_boxes = []
         self.labels = []
@@ -56,32 +57,36 @@ class ComparisonPanel(ttk.Frame):
         self.palette_box.bind("<<ComboboxSelected>>", palette_selected)
         view_controls = ttk.Frame(self)
         view_controls.pack(fill="x", pady=3)
-        ttk.Button(
-            view_controls, text="Rotate 90°", command=self.rotate
-        ).pack(side="left", expand=True, fill="x", padx=2)
-        ttk.Button(
-            view_controls, text="Mirror", command=self.flip
-        ).pack(side="left", expand=True, fill="x", padx=2)
+        button(
+            view_controls,
+            "Rotate 90°",
+            self.rotate,
+            side="left",
+            expand=True,
+            fill="x",
+            padx=2,
+        )
+        button(
+            view_controls,
+            "Mirror",
+            self.flip,
+            side="left",
+            expand=True,
+            fill="x",
+            padx=2,
+        )
         self.bind("<Map>", lambda _: self.refresh_palettes())
-        ttk.Checkbutton(
+        checkbox(
             self,
-            text="Apply each file's saved correction",
-            variable=self.correct,
-            command=self.render,
-        ).pack(anchor="w")
+            "Apply each file's saved correction",
+            self.correct,
+            self.render,
+            anchor="w",
+        )
         self.link_view = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            self,
-            text="Link pan/zoom for A and B",
-            variable=self.link_view,
-        ).pack(anchor="w")
+        checkbox(self, "Link pan/zoom for A and B", self.link_view, anchor="w")
         self.split_view = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            self,
-            text="Split view",
-            variable=self.split_view,
-            command=self.toggle_split,
-        ).pack(anchor="w")
+        checkbox(self, "Split view", self.split_view, self.toggle_split, anchor="w")
         self.split_position = tk.DoubleVar(value=50)
         self.split_slider = ttk.Scale(
             self,
@@ -91,17 +96,17 @@ class ComparisonPanel(ttk.Frame):
             command=lambda _: self.update_split(),
         )
         self.split_slider.pack(fill="x", pady=(0, 5))
-        ttk.Label(
+        caption(
             self,
-            text="Shared min/max scale. RAW coordinates are compared without image registration.",
+            "Shared min/max scale. RAW coordinates are compared without image registration.",
             wraplength=440,
-        ).pack(fill="x", pady=5)
+            fill="x",
+            pady=5,
+        )
         self.scale_bar = tk.Canvas(self, width=256, height=22, highlightthickness=0)
         self.scale_bar.pack(pady=10)
         self.images = ttk.Frame(app.viewer_stack)
-        self.split_canvas = ThermalCanvas(
-            self.images, lambda sample: self.pixel(0, sample), lambda _: None
-        )
+        self.split_canvas = ThermalCanvas(self.images, self.split_pixel, lambda _: None)
         self.split_canvas.markers = False
         self.split_canvas.show_legend = False
         self.split_canvas.overlay_drawer = self.draw_split_boundary
@@ -120,30 +125,38 @@ class ComparisonPanel(ttk.Frame):
         self.split_controls.pack_forget()
         split_tag = f"SplitBoundaryDrag{id(self.split_canvas)}"
         self.split_canvas.bindtags((split_tag,) + self.split_canvas.bindtags())
-        self.split_canvas.bind_class(split_tag, "<ButtonPress-1>", self.start_split_drag)
+        self.split_canvas.bind_class(
+            split_tag, "<ButtonPress-1>", self.start_split_drag
+        )
         self.split_canvas.bind_class(split_tag, "<B1-Motion>", self.drag_split)
         self.split_canvas.bind_class(
             split_tag, "<ButtonRelease-1>", self.finish_split_drag
         )
         self.split_canvas.pack_forget()
-        self.split_canvas.bind(
-            "<Configure>", lambda _: self.update_split(), add="+"
-        )
+        self.split_canvas.bind("<Configure>", lambda _: self.update_split(), add="+")
         for index, name in enumerate(("A", "B")):
             image_box = ttk.Frame(self.images, padding=4)
             image_box.pack(side="left", fill="both", expand=True)
             self.image_boxes.append(image_box)
-            ttk.Button(
-                self, text=f"Open image {name}…", command=lambda i=index: self.open(i)
-            ).pack(fill="x")
+            button(self, f"Open image {name}…", lambda i=index: self.open(i))
             row = ttk.Frame(self)
             row.pack(fill="x", pady=3)
-            ttk.Button(
-                row, text=f"Freeze {name}", command=lambda i=index: self.freeze(i)
-            ).pack(side="left", expand=True, fill="x")
-            ttk.Button(
-                row, text=f"Live {name}", command=lambda i=index: self.live(i)
-            ).pack(side="left", expand=True, fill="x")
+            button(
+                row,
+                f"Freeze {name}",
+                lambda i=index: self.freeze(i),
+                side="left",
+                expand=True,
+                fill="x",
+            )
+            button(
+                row,
+                f"Live {name}",
+                lambda i=index: self.live(i),
+                side="left",
+                expand=True,
+                fill="x",
+            )
             label = tk.StringVar(value=f"{name}: no image")
             self.labels.append(label)
             ttk.Label(image_box, textvariable=label, wraplength=340).pack(fill="x")
@@ -166,15 +179,20 @@ class ComparisonPanel(ttk.Frame):
                 ("+", lambda c=canvas: c.zoom(1.25)),
                 ("−", lambda c=canvas: c.zoom(0.8)),
             ):
-                ttk.Button(controls, text=title, command=action, width=5).pack(
-                    side="left", padx=2
-                )
+                ttk.Button(
+                    controls,
+                    text=title,
+                    command=lambda f=action, c=canvas: (f(), self.sync_canvas(c)),
+                    width=5,
+                ).pack(side="left", padx=2)
             self.canvases.append(canvas)
             canvas.bind("<B1-Motion>", self.sync_view, add="+")
             canvas.bind("<ButtonRelease-1>", self.sync_view, add="+")
             canvas.bind("<MouseWheel>", self.sync_view, add="+")
             canvas.bind("<Button-4>", self.sync_view, add="+")
             canvas.bind("<Button-5>", self.sync_view, add="+")
+        for label in self.labels:
+            ttk.Label(self.split_controls, textvariable=label).pack(anchor="w")
         self.summary = tk.StringVar(
             value="Open two NPZ / native RAW PNG / uint16 NPY images"
         )
@@ -184,9 +202,11 @@ class ComparisonPanel(ttk.Frame):
         self.refresh_palettes()
 
     def sync_view(self, event):
+        self.sync_canvas(event.widget)
+
+    def sync_canvas(self, source):
         if not self.link_view.get() or self.split_view.get():
             return
-        source = event.widget
         if source not in self.canvases:
             return
         for canvas in self.canvases:
@@ -211,9 +231,10 @@ class ComparisonPanel(ttk.Frame):
                 box.pack(side="left", fill="both", expand=True)
 
     def split_boundary_x(self):
-        return self.split_canvas.offset[0] + getattr(
-            self, "split_boundary", 0
-        ) * self.split_canvas.pixel_scale
+        return (
+            self.split_canvas.offset[0]
+            + getattr(self, "split_boundary", 0) * self.split_canvas.pixel_scale
+        )
 
     def start_split_drag(self, event):
         if not self.split_view.get() or self.split_canvas.raw is None:
@@ -237,26 +258,43 @@ class ComparisonPanel(ttk.Frame):
             return "break"
 
     def update_split(self):
-        if not self.split_view.get() or self.items[0] is None or self.items[1] is None:
+        if not self.split_view.get():
+            return
+        if any(item is None for item in self.items):
+            self.split_canvas.clear("Open two images for split view")
             return
         first, second = self.canvases
-        if first.rgb is None or second.rgb is None or first.rgb.shape != second.rgb.shape:
-            self.split_canvas.rgb = self.split_canvas.raw = None
-            self.split_canvas.empty_message = "Split view requires equal image dimensions"
-            self.split_canvas.redraw()
+        if (
+            first.rgb is None
+            or second.rgb is None
+            or first.rgb.shape != second.rgb.shape
+        ):
+            self.split_canvas.clear("Split view requires equal image dimensions")
             return
         width = first.rgb.shape[1]
         boundary = int(width * self.split_position.get() / 100)
-        composite = first.rgb.copy()
-        composite[:, boundary:] = second.rgb[:, boundary:]
         self.split_boundary = boundary
-        self.split_canvas.measurements = first.measurements
-        self.split_canvas.native_measurements = first.native_measurements
-        self.split_canvas.set_frame(
-            composite,
-            first.raw,
-            self.coordinates_for(first.raw.shape),
+
+        def combine(a, b):
+            return np.concatenate((a[:, :boundary], b[:, boundary:]), axis=1)
+
+        self.split_canvas.measurements = combine(
+            first.measurements, second.measurements
         )
+        self.split_canvas.corrected = self.correct.get()
+        self.split_canvas.set_frame(
+            combine(first.rgb, second.rgb),
+            combine(first.raw, second.raw),
+            first.coordinates,
+        )
+
+    def split_pixel(self, sample):
+        """Use the actual A/B side after rotation, rather than always reading A."""
+        if sample is None or self.split_canvas.raw is None:
+            return
+        x, y, _ = sample
+        _, column = self.split_canvas.inverse_coordinates[y, x]
+        self.pixel(int(column >= self.split_boundary), sample)
 
     def draw_split_boundary(self):
         if not self.split_view.get() or self.split_canvas.raw is None:
@@ -281,6 +319,8 @@ class ComparisonPanel(ttk.Frame):
 
     def rotate(self):
         self.rotation = (self.rotation + 1) % 4
+        for canvas in (*self.canvases, self.split_canvas):
+            canvas.auto_fit = True
         self.render()
 
     def flip(self):
@@ -363,9 +403,7 @@ class ComparisonPanel(ttk.Frame):
             if source == "live":
                 self.items[index] = None
                 canvas = self.canvases[index]
-                canvas.raw = canvas.rgb = canvas.coordinates = None
-                canvas.empty_message = "No camera · waiting for reconnection…"
-                canvas.redraw()
+                canvas.clear("No camera · waiting for reconnection…")
                 self.labels[index].set(f"{'AB'[index]}: waiting for live camera")
         self.render()
 
@@ -393,6 +431,8 @@ class ComparisonPanel(ttk.Frame):
             p[np.isfinite(p)] for p in planes if p is not None and np.isfinite(p).any()
         ]
         if not finite:
+            self.summary.set("No valid comparison samples")
+            self.update_split()
             return
         low, high = (
             min(float(p.min()) for p in finite),
@@ -403,24 +443,17 @@ class ComparisonPanel(ttk.Frame):
             palette=self.palette.get(), range_mode="Fixed", minimum=low, maximum=high
         )
         custom = self.app.library.palettes.get(settings.palette)
-        if custom is not None:
-            first, last = custom.stops[0][0], custom.stops[-1][0]
-            custom = TemperaturePalette(
-                custom.name,
-                tuple(
-                    (low + (t - first) / (last - first) * (high - low), color)
-                    for t, color in custom.stops
-                ),
-                custom.interpolation,
-            )
-        elif settings.palette not in PALETTES:
+        if custom is None and settings.palette not in PALETTES:
             settings = replace(settings, palette="Inferno")
         legend = legend_colors(settings, custom)
-        self.scale_bar.delete("all")
-        for x, color in enumerate(legend):
-            self.scale_bar.create_line(
-                x, 0, x, 22, fill=f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
-            )
+        legend_key = (settings.palette, custom)
+        if legend_key != self._legend_key:
+            self._legend_key = legend_key
+            self.scale_bar.delete("all")
+            for x, color in enumerate(legend):
+                self.scale_bar.create_line(
+                    x, 0, x, 22, fill=f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+                )
         for i, item in enumerate(self.items):
             if item is None:
                 continue
@@ -432,16 +465,16 @@ class ComparisonPanel(ttk.Frame):
             rgb = orient(rgb, self.rotation, self.mirror)
             oriented_raw = orient(frame.raw, self.rotation, self.mirror)
             oriented_measured = orient(measured, self.rotation, self.mirror)
-            oriented_coordinates = orient(
-                self.coordinates_for(frame.raw.shape), self.rotation, self.mirror
+            oriented_coordinates = sensor_coordinates(
+                frame.raw.shape, self.rotation, self.mirror
             )
             rgb[~np.isfinite(oriented_measured)] = (80, 80, 80)
             canvas = self.canvases[i]
-            canvas.measurements = canvas.native_measurements = oriented_measured
+            canvas.measurements = oriented_measured
+            canvas.native_measurements = measured
+            canvas.corrected = self.correct.get()
             canvas.legend_data = (legend, low, high, "°C")
-            canvas.set_frame(
-                rgb, oriented_raw, oriented_coordinates
-            )
+            canvas.set_frame(rgb, oriented_raw, oriented_coordinates)
             self.labels[i].set(f"{'AB'[i]}: {name}")
         text = f"Common range: {low:.3f}–{high:.3f} °C"
         a, b = planes
@@ -455,10 +488,3 @@ class ComparisonPanel(ttk.Frame):
                 text += "\nDifferent sensor dimensions: no pixelwise difference."
         self.summary.set(text)
         self.update_split()
-
-    def coordinates_for(self, shape):
-        coordinates = self._coordinates.get(shape)
-        if coordinates is None:
-            coordinates = np.moveaxis(np.indices(shape), 0, -1)
-            self._coordinates[shape] = coordinates
-        return coordinates

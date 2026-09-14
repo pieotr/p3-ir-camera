@@ -1,6 +1,8 @@
 """Polish UI catalog. English source strings remain stable application identifiers."""
 
 POLISH = {
+    "Hue / saturation": "Barwa / nasycenie",
+    "Brightness": "Jasność",
     "View": "Widok",
     "Filters": "Filtry",
     "Sensor": "Sensor",
@@ -81,7 +83,7 @@ POLISH = {
     "X³ · unavailable in current USB driver": "X³ · niedostępny w sterowniku USB",
     "X³ needs a verified camera command or the manufacturer's algorithm. It is not ordinary zoom.": "X³ wymaga potwierdzonego polecenia kamery lub algorytmu producenta. To nie jest zwykłe powiększenie.",
     "Temporal filter: current-frame weight": "Filtr czasowy: waga bieżącej klatki",
-    "Temporal filtering applies only to Filtered temperature. All pixel readouts use original RAW.\n\nAbsolute temperature palettes bypass CLAHE and DDE to preserve their temperature thresholds.": "Filtr czasowy dotyczy tylko temperatury filtrowanej. Odczyty pikseli korzystają z RAW.\n\nPalety bezwzględne pomijają CLAHE i DDE, zachowując progi temperatury.",
+    "Temporal filtering applies only to Filtered temperature. Pixel measurements stay independent of display filters.\n\nCLAHE and DDE work with every palette; enhanced colors no longer indicate exact temperature thresholds.": "Filtr czasowy dotyczy tylko temperatury filtrowanej. Pomiary pikseli są niezależne od filtrów obrazu.\n\nCLAHE i DDE działają z każdą paletą; zmienione kolory nie wskazują dokładnych progów temperatury.",
     "Fit image": "Dopasuj obraz",
     "Inspect pixels · Ctrl+X": "Inspekcja pikseli · Ctrl+X",
     "Rotate 90°": "Obróć o 90°",
@@ -97,7 +99,7 @@ POLISH = {
     "Import JSON…": "Importuj JSON…",
     "Export JSON…": "Eksportuj JSON…",
     "Delete user palette": "Usuń paletę użytkownika",
-    "Define temperature/color points in °C.\nLinear gradients or discrete bands.\nFactory palettes are protected.\n\nAbsolute maps use temperature data;\nAGC, CLAHE and DDE are bypassed.": "Zdefiniuj punkty temperatury i koloru w °C.\nGradienty liniowe lub osobne pasma.\nPalety fabryczne są chronione.\n\nMapy bezwzględne korzystają z temperatury;\nAGC, CLAHE i DDE są pomijane.",
+    "Define temperature/color points in °C.\nLinear gradients or discrete bands.\nFactory palettes are protected.\n\nView controls the display range. CLAHE and DDE also apply to custom colors.": "Zdefiniuj punkty temperatury i koloru w °C.\nGradienty liniowe lub osobne pasma.\nPalety fabryczne są chronione.\n\nWidok steruje zakresem skali. CLAHE i DDE działają także z własnymi kolorami.",
     "Name (new name creates a copy)": "Nazwa (nowa nazwa tworzy kopię)",
     "linear": "liniowa",
     "steps": "przedziały",

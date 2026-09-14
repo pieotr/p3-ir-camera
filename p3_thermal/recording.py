@@ -5,6 +5,7 @@ as dropped frames; requested FPS samples arrivals and never invents camera frame
 """
 
 from contextlib import contextmanager
+from functools import cached_property
 from pathlib import Path
 
 import json
@@ -131,18 +132,18 @@ class Sequence:
         self.path = Path(path).resolve()
         with self.connect() as db:
             row = db.execute(
-                "SELECT value FROM metadata WHERE key='session'"
+                "SELECT value FROM metadata WHERE key='session' AND length(value) <= 16000000"
             ).fetchone()
             if row is None or len(row[0]) > 16_000_000:
                 raise ValueError("Invalid sequence metadata")
             self.metadata = json.loads(row[0])
-            if self.metadata.get("version") != 1:
+            if not isinstance(self.metadata, dict) or self.metadata.get("version") != 1:
                 raise ValueError("Unsupported sequence version")
             self.index = db.execute(
                 "SELECT id,timestamp FROM frames ORDER BY id"
-            ).fetchall()
-        if not self.index:
-            raise ValueError("Sequence contains no completed frames")
+            ).fetchmany(1_000_001)
+        if not self.index or len(self.index) > 1_000_000:
+            raise ValueError("Sequence must contain 1–1000000 completed frames")
         stamps = np.array([row[1] for row in self.index], dtype=float)
         if not np.isfinite(stamps).all() or (np.diff(stamps) <= 0).any():
             raise ValueError(
@@ -161,19 +162,47 @@ class Sequence:
     def _decode(blob, count):
         decoder = zlib.decompressobj()
         decoded = decoder.decompress(blob, count + 1)
-        if len(decoded) != count or not decoder.eof:
+        if len(decoded) != count or not decoder.eof or decoder.unused_data:
             raise ValueError("Corrupt sequence frame")
         return decoded
 
     def frame(self, index):
         with self.connect() as db:
-            row = db.execute(
-                "SELECT timestamp,height,width,raw,brightness FROM frames WHERE id=?",
-                (self.index[index][0],),
-            ).fetchone()
-        stamp, h, w, raw, brightness = row
-        if not 0 < h * w <= 1_048_576 or min(h, w) <= 0:
-            raise ValueError("Invalid sequence dimensions")
+            return self._frame(db, index)
+
+    def frames(self):
+        """Stream analysis through one read-only connection, without retaining frames."""
+        with self.connect() as db:
+            for index in range(len(self.index)):
+                yield self._frame(db, index)
+
+    def _frame(self, db, index):
+        identifier = self.index[index][0]
+        row = db.execute(
+            "SELECT timestamp,height,width,length(raw),length(brightness) FROM frames WHERE id=?",
+            (identifier,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Missing sequence frame")
+        stamp, h, w, raw_size, brightness_size = row
+        if (
+            type(h) is not int
+            or type(w) is not int
+            or min(h, w) <= 0
+            or h * w > 1_048_576
+            or not isinstance(stamp, (int, float))
+            or not np.isfinite(stamp)
+            or type(raw_size) is not int
+            or type(brightness_size) is not int
+            or not 0 < raw_size <= h * w * 2 + 65536
+            or not 0 < brightness_size <= h * w + 65536
+        ):
+            raise ValueError("Invalid sequence dimensions or payload size")
+        raw, brightness = db.execute(
+            "SELECT raw,brightness FROM frames WHERE id=?", (identifier,)
+        ).fetchone()
+        if not isinstance(raw, bytes) or not isinstance(brightness, bytes):
+            raise ValueError("Sequence planes must be compressed blobs")
         return Frame(
             np.frombuffer(self._decode(raw, h * w * 2), "<u2").reshape(h, w).copy(),
             np.frombuffer(self._decode(brightness, h * w), np.uint8)
@@ -182,7 +211,9 @@ class Sequence:
             stamp,
         )
 
-    @property
+    @cached_property
     def times(self):
         times = np.array([row[1] for row in self.index])
-        return times - times[0]
+        times -= times[0]
+        times.setflags(write=False)
+        return times

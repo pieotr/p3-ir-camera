@@ -97,21 +97,24 @@ class Translator:
                         record["source_var"] = str(widget.cget("textvariable"))
                         record["display_var"] = tk.StringVar(master=self.root)
                         widget.configure(textvariable=record["display_var"])
-                    record["display_var"].set(
-                        self.text(self.root.getvar(record["source_var"]))
-                    )
+                    value = self.text(self.root.getvar(record["source_var"]))
+                    if record["display_var"].get() != value:
+                        record["display_var"].set(value)
                 elif "text" in tuple(widget.keys()):
                     current = str(widget.cget("text"))
                     if current != record.get("translated"):
                         record["original"] = current
                     translated = self.text(record.get("original", current))
-                    widget.configure({"text": translated})
+                    if current != translated:
+                        widget.configure({"text": translated})
                     record["translated"] = translated
                 if isinstance(widget, ttk.Treeview):
                     headings = record.setdefault("headings", {})
                     for column in widget.cget("columns"):
                         headings.setdefault(column, widget.heading(column, "text"))
-                        widget.heading(column, text=self.text(headings[column]))
+                        translated = self.text(headings[column])
+                        if widget.heading(column, "text") != translated:
+                            widget.heading(column, text=translated)
                 for child in widget.winfo_children():
                     visit(child)
             except tk.TclError:
@@ -143,12 +146,18 @@ class Translator:
 
             record["display_var"].trace_add("write", selected)
             widget.configure(textvariable=record["display_var"])
+        current = tuple(widget.cget("values"))
+        if current != record.get("translated_values"):
+            record["values"] = current
         values = tuple(self.text(value) for value in record["values"])
         record["updating"] = True
         try:
             record["translated_values"] = values
-            widget.configure(values=values)
-            record["display_var"].set(self.text(self.root.getvar(record["source_var"])))
+            if current != values:
+                widget.configure(values=values)
+            display = self.text(self.root.getvar(record["source_var"]))
+            if record["display_var"].get() != display:
+                record["display_var"].set(display)
         finally:
             record["updating"] = False
 

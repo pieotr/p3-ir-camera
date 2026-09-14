@@ -25,7 +25,7 @@ Reload using `sudo udevadm control --reload-rules`, then reconnect the camera. T
 
 ## Workspace
 
-The thermal image stays on the left. Use the compact, two-row category strip **directly above the right settings panel**: View, Filters, Sensor, Palettes, Measurements, RAW editing, Video or Compare. Help and Settings are separate compact buttons in the header. Drag the vertical divider to resize the sidebar, or the horizontal divider below the image to resize its navigation/readout panel. Both control panels scroll vertically and horizontally when needed; the category strip scrolls horizontally in narrow windows. The window can be reduced to 520×360. Analysis, palette editing, image export options and plots use this same window. File and color pickers remain native dialogs.
+The thermal image stays on the left. Use the compact, two-row category strip **directly above the right settings panel**: View, Filters, Sensor, Palettes, Measurements, RAW editing, Video or Compare. Help and Settings are separate compact buttons in the header. Drag the vertical divider to resize the sidebar, or the horizontal divider below the image to resize its navigation/readout panel. Both control panels scroll vertically and horizontally when needed; the category strip scrolls horizontally in narrow windows. Startup uses a normal window sized from the requested controls and available screen space; it does not maximize or enter fullscreen. The window can be reduced to 520×360. Analysis, palette editing, image export options and plots use this same window. File and color pickers remain native dialogs.
 
 Use the wheel or on-screen +/− buttons to zoom, and Pan or the arrow buttons to move the image. Fit restores the full frame; Pixels enables detailed inspection. Under the image, the left readout shows native sensor coordinates, temperature and RAW counts. Rotation, mirroring and zoom do not alter measurements.
 
@@ -50,7 +50,7 @@ The six decimal places preserve all values in this encoding; they do not claim s
 - Auto percentile adapts the display range using percentiles 1–99; Fixed uses a specified temperature range after Apply range.
 - CLAHE improves local contrast. DDE independently sharpens edges with strength 0–4; zero has no effect, and smooth areas may change little.
 - The image legend runs from maximum at the top to minimum at the bottom. With CLAHE, DDE or Factory brightness, five color bands report observed temperature min/max, because local processing has no unique inverse temperature scale.
-- Custom palettes define absolute temperature/color stops with linear gradients or discrete bands. JSON presets persist between sessions; factory palettes cannot be overwritten or removed. Absolute palettes bypass CLAHE, DDE and automatic scaling to preserve their temperature thresholds.
+- Custom palettes define absolute temperature/color stops with linear gradients or discrete bands. JSON presets persist between sessions; factory palettes cannot be overwritten or removed. Auto adapts their range to the frame; Fixed uses the entered limits. CLAHE and DDE work with custom palettes too, affecting display colors without changing measurements.
 - Measurements provides spots, rectangles, circles and lines, with live drag previews, minimum/maximum/mean, line profiles, CSV export and isotherms.
 - RAW editing provides experimental emissivity and environmental correction, including painted material layers with an eraser and undo.
 - Video records native radiometric frames to `.p3v`. After Stop recording drains the writer queue successfully, the completed sequence opens automatically for analysis. Empty or failed recordings do not replace the current image.
@@ -82,6 +82,7 @@ Pixel grid lines appear at 2800%, full temperature labels at 9600%, and zoom is 
 ## Documentation and development
 
 - [Measurements, RAW editing and video](docs/ANALYSIS.md)
+- [Optimization audit and verification scope](docs/OPTIMIZATION.md)
 - [Architecture and extension contracts](docs/ARCHITECTURE.md)
 - [Formats, troubleshooting and verification](docs/OPERATIONS.md)
 - [USB protocol](P3_PROTOCOL.md)
@@ -102,8 +103,8 @@ Tests are not part of application startup. `p3_viewer.py` is the entry point; ap
 ## Additional viewing tools
 
 - **Compare:** two saved images or a frozen reference against the live camera, with a shared scale, pixel inspection and B − A statistics. Each slot offers Open image, Freeze and Live. Freeze copies that slot or the working frame if empty; live comparison continues when the main view is frozen/offline.
-- **White hot / red peak:** grayscale with the hottest end of the temperature range in red; local enhancements are bypassed to keep red tied to temperature.
-- **Auto-scale user palette to frame min/max:** an optional View switch stretches custom colors over the current frame without editing the preset.
+- **White hot / red peak:** grayscale with the upper end of the display scale in red. Disable CLAHE/DDE when interpreting red as temperature; enhanced edges can also become red.
+- **Custom palette scaling:** the View **Fixed scale** checkbox selects manual limits; otherwise the range uses frame percentiles. Older NPZ files with `custom_auto_scale` retain their explicit min/max behavior.
 - **Focus peaking:** adjustable green thermal-edge overlay in Filters, excluded from measurements and exports.
 - **Remember mirror:** Sensor saves live-view mirroring per camera model and restores it automatically; imported orientation does not replace this preference.
 - **Live correction:** RAW editing has an explicit experimental switch for applying enabled emissivity correction to the running stream. It starts disabled; material masks do not track motion.

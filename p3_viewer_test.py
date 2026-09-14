@@ -42,6 +42,7 @@ def test_hover_uses_native_coordinates_after_all_transforms(rotation, mirror):
     canvas.offset = [-40.5, 17.2]
     canvas.legend_rect = None
     for y, x in np.ndindex(canvas.raw.shape):
+        canvas.cell_at = lambda px, py: ThermalCanvas.cell_at(canvas, px, py)
         ThermalCanvas.pick(
             canvas,
             canvas.offset[0] + (x + 0.5) * 128,

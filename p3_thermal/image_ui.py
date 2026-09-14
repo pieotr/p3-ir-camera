@@ -8,6 +8,7 @@ import cv2
 
 from .export import save_image
 from .i18n import filedialog, messagebox
+from .widgets import button, caption, checkbox
 
 
 def image_dialog(parent, frame, rgb, on_saved, legend=None, host=None):
@@ -25,23 +26,25 @@ def image_dialog(parent, frame, rgb, on_saved, legend=None, host=None):
             anchor="w", pady=5
         )
     include_legend = tk.BooleanVar(value=legend is not None)
-    ttk.Checkbutton(
-        box, text="Include legend (color images only)", variable=include_legend
-    ).pack(anchor="w", pady=6)
+    checkbox(
+        box, "Include legend (color images only)", include_legend, anchor="w", pady=6
+    )
     scale, quality = tk.StringVar(value="3"), tk.StringVar(value="95")
     for label, variable, low, high in [
         ("JPEG enlargement (bicubic)", scale, 1, 8),
         ("JPEG quality", quality, 1, 100),
     ]:
-        ttk.Label(box, text=label).pack(anchor="w", pady=(10, 2))
+        caption(box, label, anchor="w", pady=(10, 2))
         ttk.Spinbox(box, from_=low, to=high, textvariable=variable, width=10).pack(
             anchor="w"
         )
-    ttk.Label(
+    caption(
         box,
-        text="RAW PNG preserves sensor counts and native orientation.\nIt may look dark in ordinary image viewers.\nUse full NPZ data to reopen all channels in this application.",
+        "RAW PNG preserves sensor counts and native orientation.\nIt may look dark in ordinary image viewers.\nUse full NPZ data to reopen all channels in this application.",
         wraplength=440,
-    ).pack(anchor="w", pady=12)
+        anchor="w",
+        pady=12,
+    )
 
     def save():
         try:
@@ -73,4 +76,4 @@ def image_dialog(parent, frame, rgb, on_saved, legend=None, host=None):
         except (ValueError, OSError, cv2.error) as exc:
             messagebox.showerror("Save failed", str(exc), parent=dialog)
 
-    ttk.Button(box, text="Save…", command=save).pack(fill="x")
+    button(box, "Save…", save)

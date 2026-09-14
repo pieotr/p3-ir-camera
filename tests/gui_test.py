@@ -48,7 +48,7 @@ def test_desktop_zoom_sources_and_shutdown():
             assert app.settings.mode == "Factory brightness"
         app.clahe.set(True)
         app.update_settings()
-        assert app.canvas.legend_data[3] == "°C"
+        assert app.canvas.legend_data[3] == "°C min/max"
         assert len(app.canvas.legend_data[4]) == 5
         app.detail.set(True)
         app.dde_strength.set(3.0)
@@ -69,13 +69,12 @@ def test_desktop_zoom_sources_and_shutdown():
             app.canvas.offset[1] + 0.5 * app.canvas.pixel_scale,
         )
         expected_measurements = np.fliplr(np.rot90(app.measured, 1))
-        np.testing.assert_array_equal(
-            app.canvas.native_measurements, expected_measurements
-        )
+        np.testing.assert_array_equal(app.canvas.measurements, expected_measurements)
+        np.testing.assert_array_equal(app.canvas.native_measurements, app.measured)
         app.analysis.radiometry.enabled = True
         app.render()
         app.pixel((0, 0, int(app.canvas.raw[0, 0])))
-        assert f"{expected_measurements[0, 0]:.3f}" in app.pixel_text.get()
+        assert f"{app.measured[0, 0]:.3f}" in app.pixel_text.get()
         assert "RAW" in app.pixel_text.get()
         assert not errors
     finally:
@@ -85,11 +84,6 @@ def test_desktop_zoom_sources_and_shutdown():
             root.update()
             time.sleep(0.02)
         assert not app.worker.is_alive()
-        try:
-            root.update()
-            root.destroy()
-        except tk.TclError:
-            pass
 
 
 def test_disconnect_waits_reconnects_and_close_cancels_retries(monkeypatch):
@@ -130,7 +124,7 @@ def test_disconnect_waits_reconnects_and_close_cancels_retries(monkeypatch):
             return self.alive and not self.stop_event.is_set()
 
     monkeypatch.setattr(module, "Acquisition", FakeAcquisition)
-    monkeypatch.setattr(module.ThermalApp, "RECONNECT_DELAY", 0.15)
+    monkeypatch.setattr(module.ThermalApp, "RECONNECT_DELAY", 60.0)
     root = tk.Tk()
     app = module.ThermalApp(root)
 
@@ -145,6 +139,7 @@ def test_disconnect_waits_reconnects_and_close_cancels_retries(monkeypatch):
         until(lambda: app._waiting)
         assert root.winfo_exists() and not app.closing
         assert "No camera" in app.status.get()
+        app._retry_at = 0
         until(lambda: app.frame is not None)
         assert len(workers) == 2
         app.paused = True
@@ -152,6 +147,7 @@ def test_disconnect_waits_reconnects_and_close_cancels_retries(monkeypatch):
         until(lambda: app._waiting)
         assert app.frame is None and app.canvas.raw is None
         assert not app.closing
+        app._retry_at = 0
         until(lambda: app.frame is not None)
         assert len(workers) == 3 and not app.paused
         workers[-1].alive = False
@@ -360,15 +356,9 @@ def test_analysis_workspace_roi_layers_recording_and_playback(monkeypatch, tmp_p
         assert app.comparison.split_canvas.find_withtag("split_boundary")
         old_position = app.comparison.split_position.get()
         boundary_x = app.comparison.split_boundary_x()
-        app.comparison.start_split_drag(
-            SimpleNamespace(x=boundary_x, y=20)
-        )
-        app.comparison.drag_split(
-            SimpleNamespace(x=boundary_x + 20, y=20)
-        )
-        app.comparison.finish_split_drag(
-            SimpleNamespace(x=boundary_x + 20, y=20)
-        )
+        app.comparison.start_split_drag(SimpleNamespace(x=boundary_x, y=20))
+        app.comparison.drag_split(SimpleNamespace(x=boundary_x + 20, y=20))
+        app.comparison.finish_split_drag(SimpleNamespace(x=boundary_x + 20, y=20))
         assert app.comparison.split_position.get() != old_position
         app.comparison.split_view.set(False)
         app.comparison.toggle_split()
@@ -592,5 +582,164 @@ def test_compact_navigation_and_scrollable_resizable_panels():
         assert len({button.winfo_y() for button in sections}) == 2
         assert app.sidebar.buttons["Settings"].winfo_ismapped()
         assert not errors
+    finally:
+        app.close()
+
+
+def test_palette_editor_save_reopen_and_scroll_recovery():
+    from tkinter import ttk
+
+    import tkinter as tk
+
+    from p3_thermal.app import ThermalApp
+
+    root = tk.Tk()
+    errors = []
+    root.report_callback_exception = lambda *args: errors.append(args)
+    app = ThermalApp(root, demo=True)
+
+    def pump():
+        deadline = time.monotonic() + 0.3
+        while time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+
+    def children(widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from children(child)
+
+    def click(widget, text):
+        next(
+            child
+            for child in children(widget)
+            if isinstance(child, ttk.Button) and child.cget("text") == text
+        ).invoke()
+        pump()
+
+    try:
+        pump()
+        assert root.state() == "normal"
+        assert not root.attributes("-fullscreen")
+        app.sidebar.select("Palettes")
+        click(app.palette_panel, "New…")
+        page = app.sidebar.pages["Palette editor"]
+        assert page.winfo_height() >= page.winfo_reqheight() > 300
+        from p3_thermal.color_ui import ColorWheel
+
+        click(page, "Color…")
+        wheel = next(child for child in children(page) if isinstance(child, ColorWheel))
+        assert wheel.winfo_manager() == "pack"
+        wheel.color.set("#FF0000")
+        assert wheel.saturation == wheel.value.get() == 1
+        wheel.canvas.event_generate("<Button-1>", x=120, y=120)
+        assert wheel.saturation < 0.01
+        wheel.value.set(0)
+        wheel.publish()
+        assert wheel.color.get() == "#000000"
+        wheel.color.set("#00FF00")
+        assert abs(wheel.hue - 1 / 3) < 1e-6
+        click(page, "Add")
+        click(page, "Color…")
+        assert not wheel.winfo_manager()
+        entry = next(child for child in children(page) if isinstance(child, ttk.Entry))
+        entry.delete(0, "end")
+        entry.insert(0, "Audit palette")
+        click(page, "Save and use")
+        assert app.palette.get() == "Audit palette"
+        assert app.library.palettes["Audit palette"].stops[0][0] == 15
+        assert (30.0, "#00FF00") in app.library.palettes["Audit palette"].stops
+        click(app.palette_panel, "Edit…")
+        assert app.sidebar.pages["Palette editor"] is not page
+        assert app.sidebar.content.winfo_height() > 300
+        root.geometry("520x360")
+        pump()
+        assert app.sidebar.vertical.winfo_ismapped()
+        app.sidebar.viewport.yview_moveto(1)
+        app.sidebar.select("Settings")
+        root.geometry("1400x950")
+        pump()
+        app.body.sashpos(0, 800)
+        pump()
+        assert not app.sidebar.vertical.winfo_ismapped()
+        assert not app.sidebar.horizontal.winfo_ismapped()
+        app.sidebar.viewport.event_generate("<Button-5>")
+        pump()
+        assert app.sidebar.viewport.yview() == (0.0, 1.0)
+        app.language.set("Polski")
+        app.change_language()
+        app.palette_panel.edit_selected()
+        pump()
+        assert app.sidebar.content.winfo_height() > 300
+        assert "Audit palette" in app.palette_panel.listing.cget("values")
+        assert not errors
+    finally:
+        app.close()
+
+
+def test_comparison_native_readouts_and_button_zoom():
+    from tkinter import ttk
+
+    import tkinter as tk
+
+    import numpy as np
+
+    from p3_thermal.acquisition import Frame
+    from p3_thermal.analysis import AnalysisState, Radiometry
+    from p3_thermal.app import ThermalApp
+
+    root = tk.Tk()
+    app = ThermalApp(root, demo=True)
+    try:
+        root.update()
+        comparison = app.comparison
+        app.sidebar.select("Compare")
+        raw = np.arange(15, dtype=np.uint16).reshape(3, 5) + 19000
+        comparison.items = [
+            (
+                Frame(raw + offset, np.zeros(raw.shape, np.uint8), 0),
+                AnalysisState(radiometry=Radiometry(enabled=True, emissivity=0.8)),
+                name,
+            )
+            for offset, name in ((0, "A"), (1000, "B"))
+        ]
+        comparison.correct.set(True)
+        comparison.render()
+        root.update()
+        controls = next(
+            child
+            for child in comparison.image_boxes[0].winfo_children()
+            if isinstance(child, ttk.Frame)
+        )
+        zoom = next(
+            child for child in controls.winfo_children() if child.cget("text") == "+"
+        )
+        old_scale = comparison.canvases[0].pixel_scale
+        zoom.invoke()
+        assert comparison.canvases[0].pixel_scale > old_scale
+        assert comparison.canvases[0].pixel_scale == comparison.canvases[1].pixel_scale
+        comparison.split_view.set(True)
+        comparison.toggle_split()
+        for rotation in range(4):
+            for mirror in (False, True):
+                comparison.rotation, comparison.mirror = rotation, mirror
+                comparison.render()
+                canvas = comparison.split_canvas
+                for column, slot in ((0, 0), (canvas.raw.shape[1] - 1, 1)):
+                    sy, sx = canvas.coordinates[0, column]
+                    frame, state, _ = comparison.items[slot]
+                    assert canvas.raw[0, column] == frame.raw[sy, sx]
+                    canvas.pick(
+                        canvas.offset[0] + (column + 0.5) * canvas.pixel_scale,
+                        canvas.offset[1] + 0.5 * canvas.pixel_scale,
+                    )
+                    assert f"({sx}, {sy})" in comparison.labels[slot].get()
+                    assert (
+                        f"{state.celsius(frame.raw)[sy, sx]:.6f}"
+                        in comparison.labels[slot].get()
+                    )
+        comparison.items[1] = None
+        comparison.render()
+        assert comparison.split_canvas.raw is None
     finally:
         app.close()

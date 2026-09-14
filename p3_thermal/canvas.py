@@ -58,6 +58,12 @@ class ThermalCanvas(tk.Canvas):
         return super().create_text(*args, **kwargs)
 
     def set_frame(self, rgb, raw, coordinates):
+        if coordinates is not self.coordinates:
+            height, width = coordinates.max(axis=(0, 1)) + 1
+            self.inverse_coordinates = np.empty((height, width, 2), np.int32)
+            self.inverse_coordinates[coordinates[..., 0], coordinates[..., 1]] = (
+                np.moveaxis(np.indices(raw.shape), 0, -1)
+            )
         self.rgb, self.raw, self.coordinates = rgb, raw, coordinates
         if self.auto_fit:
             self.fit()
@@ -68,6 +74,14 @@ class ThermalCanvas(tk.Canvas):
             self.winfo_pointery() - self.winfo_rooty(),
         )
         self.pick(x, y)
+
+    def clear(self, message):
+        """Remove stale image and measurement data together on source loss."""
+        self.raw = self.rgb = self.coordinates = None
+        self.measurements = self.native_measurements = None
+        self.gesture_start = self.gesture_last = None
+        self.empty_message = message
+        self.redraw()
 
     def fit(self):
         self.auto_fit = True
@@ -106,19 +120,27 @@ class ThermalCanvas(tk.Canvas):
         """Ctrl+X selects a legible native-pixel inspection magnification."""
         self.zoom(128 / self.pixel_scale)
 
-    def sensor_at(self, x, y):
+    def cell_at(self, x, y):
+        """Resolve a displayed pixel once; measurements use its native coordinate map."""
         if self.raw is None or self.coordinates is None:
             return None
         if self.legend_rect is not None:
             left, top, right, bottom = self.legend_rect
             if left <= x <= right and top <= y <= bottom:
                 return None
-        col, row = (
-            int(np.floor((x - self.offset[0]) / self.pixel_scale)),
-            int(np.floor((y - self.offset[1]) / self.pixel_scale)),
+        col = int((x - self.offset[0]) // self.pixel_scale)
+        row = int((y - self.offset[1]) // self.pixel_scale)
+        return (
+            (row, col)
+            if 0 <= row < self.raw.shape[0] and 0 <= col < self.raw.shape[1]
+            else None
         )
-        if 0 <= row < self.raw.shape[0] and 0 <= col < self.raw.shape[1]:
-            sy, sx = self.coordinates[row, col]
+
+    def sensor_at(self, x, y):
+        cell = self.cell_at(x, y)
+        if cell is not None:
+            assert self.coordinates is not None
+            sy, sx = self.coordinates[cell]
             return int(sx), int(sy)
         return None
 
@@ -163,22 +185,13 @@ class ThermalCanvas(tk.Canvas):
         self.pick(event.x, event.y)
 
     def pick(self, x, y):
-        if self.raw is None or self.coordinates is None:
-            return
-        if self.legend_rect is not None:
-            left, top, right, bottom = self.legend_rect
-            if left <= x <= right and top <= y <= bottom:
-                self.on_pixel(None)
-                return
-        col, row = (
-            int(np.floor((x - self.offset[0]) / self.pixel_scale)),
-            int(np.floor((y - self.offset[1]) / self.pixel_scale)),
-        )
-        if 0 <= row < self.raw.shape[0] and 0 <= col < self.raw.shape[1]:
-            sensor_y, sensor_x = self.coordinates[row, col]
-            self.on_pixel((int(sensor_x), int(sensor_y), int(self.raw[row, col])))
-        else:
+        cell = self.cell_at(x, y)
+        if cell is None:
             self.on_pixel(None)
+        else:
+            assert self.coordinates is not None and self.raw is not None
+            sy, sx = self.coordinates[cell]
+            self.on_pixel((int(sx), int(sy), int(self.raw[cell])))
 
     def redraw(self):
         self.delete("all")
@@ -342,12 +355,12 @@ class ThermalCanvas(tk.Canvas):
         if self.coordinates is None:
             return None
         x, y = point
-        matches = np.argwhere(
-            (self.coordinates[..., 0] == y) & (self.coordinates[..., 1] == x)
-        )
-        if not len(matches):
+        if (
+            not 0 <= y < self.inverse_coordinates.shape[0]
+            or not 0 <= x < self.inverse_coordinates.shape[1]
+        ):
             return None
-        row, col = matches[0]
+        row, col = self.inverse_coordinates[y, x]
         return (
             self.offset[0] + (col + 0.5) * self.pixel_scale,
             self.offset[1] + (row + 0.5) * self.pixel_scale,

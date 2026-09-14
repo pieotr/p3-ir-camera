@@ -6,9 +6,10 @@ from pathlib import Path
 import json
 import os
 import re
-import tempfile
 
 import numpy as np
+
+from .storage import atomic_output
 
 
 @dataclass(frozen=True)
@@ -92,18 +93,9 @@ def write_json(path, data):
     """Atomic replacement avoids losing an existing library on an interrupted save."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    name = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, delete=False
-        ) as stream:
-            name = stream.name
-            json.dump(data, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
-        os.replace(name, path)
-    finally:
-        if name is not None and Path(name).exists():
-            Path(name).unlink()
+    with atomic_output(path, "w") as stream:
+        json.dump(data, stream, indent=2, ensure_ascii=False)
+        stream.write("\n")
 
 
 def default_library_path():

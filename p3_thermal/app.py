@@ -34,10 +34,12 @@ from .processing import (
     legend_colors,
     orient,
     pixel_label,
+    sensor_coordinates,
     temperature,
 )
 from .scrolling import ScrollArea, install_scroll_routing
 from .sidebar import Sidebar
+from .widgets import button, caption, checkbox
 
 
 class ThermalApp:
@@ -59,7 +61,6 @@ class ThermalApp:
         self.library = PaletteLibrary(PALETTES)
         self._combos = {}
         self._render_key = None
-        self._coordinates = None
         self.processor = Processor()
         self.settings = DisplaySettings()
         self.custom_auto = tk.BooleanVar(value=False)
@@ -73,9 +74,6 @@ class ThermalApp:
         self._retry_at = 0.0
         self._connection_error = ""
         self.root.title("P3 Thermal Studio" + (" · DEMO" if demo else ""))
-        width = min(1440, max(520, root.winfo_screenwidth() - 80))
-        height = min(960, max(360, root.winfo_screenheight() - 100))
-        self.root.geometry(f"{width}x{height}")
         self.root.minsize(520, 360)
         self._style()
         self._build()
@@ -83,19 +81,18 @@ class ThermalApp:
         self.workspace = AnalysisWorkspace(self)
         self.comparison = ComparisonPanel(self.sidebar, self)
         self.sidebar.add(self.comparison, text="Compare")
-        self.help_panel = HelpPanel(
-            self.viewer_stack, self.translator, self.close_help
-        )
+        self.help_panel = HelpPanel(self.viewer_stack, self.translator, self.close_help)
         help_menu = ttk.Frame(self.sidebar.viewport, padding=12)
-        ttk.Label(
+        caption(
             help_menu,
-            text="Help fills the main workspace. Select another category to return.",
+            "Help fills the main workspace. Select another category to return.",
             wraplength=400,
-        ).pack(fill="x")
+            fill="x",
+        )
         self.sidebar.add(help_menu, text="Help")
         settings = ttk.Frame(self.sidebar.viewport, padding=12)
         self.sidebar.add(settings, text="Settings")
-        ttk.Label(settings, text="Language").pack(anchor="w")
+        caption(settings, "Language")
         self.language = tk.StringVar(
             value="Polski" if self.preferences.language == "pl" else "English"
         )
@@ -106,19 +103,18 @@ class ThermalApp:
             state="readonly",
         )
         self.language_box.pack(fill="x", pady=8)
-        self.language_box.bind(
-            "<<ComboboxSelected>>", self.change_language
-        )
-        ttk.Label(
+        self.language_box.bind("<<ComboboxSelected>>", self.change_language)
+        caption(
             settings,
-            text="Language changes immediately and is remembered.",
+            "Language changes immediately and is remembered.",
             wraplength=400,
-        ).pack(fill="x")
+            fill="x",
+        )
         self.sidebar.on_select = self.show_section
         self.show_section(self.sidebar.selection.get())
         self.translator.refresh()
         self._translation_at = 0.0
-        self.root.after(100, self.initial_layout)
+        self.root.after_idle(self.initial_layout)
         root.protocol("WM_DELETE_WINDOW", self.close)
         for binding, _, _, action in SHORTCUTS:
             root.bind(binding, lambda event, name=action: self.shortcut(event, name))
@@ -130,14 +126,43 @@ class ThermalApp:
         if self.closing:
             return
         self.root.update_idletasks()
-        width = self.body.winfo_width()
-        menu_width = min(560, max(240, int(width * 0.4)))
-        self.body.sashpos(0, max(200, width - menu_width))
-        height = self.image_info_split.winfo_height()
-        info_height = min(
-            self.info_area.content.winfo_reqheight() + 8, max(90, height // 3)
+        menu_width = (
+            max(
+                self.sidebar.pages["View"].winfo_reqwidth(),
+                self.sidebar.navigation.winfo_reqwidth(),
+            )
+            + 12
         )
-        self.image_info_split.sashpos(0, max(80, height - info_height))
+        info_height = self.info_area.content.winfo_reqheight() + 8
+        image_width = max(512, self.info_area.content.winfo_reqwidth())
+        content_height = max(
+            384 + info_height,
+            self.sidebar.pages["View"].winfo_reqheight()
+            + self.sidebar.navigation_area.winfo_reqheight(),
+        )
+        header_height = (
+            sum(
+                child.winfo_reqheight()
+                for child in self.root.winfo_children()
+                if child is not self.body
+            )
+            + 24
+        )
+        width = min(menu_width + image_width + 12, self.root.winfo_screenwidth() - 80)
+        height = min(
+            content_height + header_height, self.root.winfo_screenheight() - 100
+        )
+        self.root.geometry(f"{max(520, width)}x{max(360, height)}")
+
+        # Window-manager geometry arrives asynchronously; place dividers after mapping.
+        def place_panes():
+            if not self.closing:
+                self.body.sashpos(0, max(200, self.body.winfo_width() - menu_width))
+                self.image_info_split.sashpos(
+                    0, max(80, self.image_info_split.winfo_height() - info_height)
+                )
+
+        self.root.after(100, place_panes)
 
     def _style(self):
         self.root.configure(background="#18212e")
@@ -219,9 +244,7 @@ class ThermalApp:
         self.utility_bar = ttk.Frame(header)
         self.utility_bar.pack(side="right")
         ttk.Label(header, text="THERMAL STUDIO", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text=f"  {self.model.upper()} / radiometric workspace").pack(
-            side="left"
-        )
+        caption(header, f"  {self.model.upper()} / radiometric workspace", side="left")
         action_area = ScrollArea(self.root, horizontal_only=True)
         action_area.pack(fill="x", padx=10)
         toolbar = action_area.content
@@ -231,15 +254,9 @@ class ThermalApp:
         self.connect_button.pack(side="left", padx=3)
         self.pause_button = ttk.Button(toolbar, text="Freeze", command=self.pause)
         self.pause_button.pack(side="left", padx=3)
-        ttk.Button(toolbar, text="Open RAW…", command=self.open_snapshot).pack(
-            side="left", padx=3
-        )
-        ttk.Button(toolbar, text="Save data…", command=self.export).pack(
-            side="left", padx=3
-        )
-        ttk.Button(toolbar, text="Save image…", command=self.screenshot).pack(
-            side="left", padx=3
-        )
+        button(toolbar, "Open RAW…", self.open_snapshot, side="left", padx=3)
+        button(toolbar, "Save data…", self.export, side="left", padx=3)
+        button(toolbar, "Save image…", self.screenshot, side="left", padx=3)
         self.shutter_button = ttk.Button(
             toolbar, text="Shutter / NUC", command=lambda: self.command("shutter", None)
         )
@@ -282,9 +299,7 @@ class ThermalApp:
                 side="left", padx=2
             )
         self.show_legend = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            navigation, text="Legend", variable=self.show_legend, command=self.render
-        ).pack(side="right")
+        checkbox(navigation, "Legend", self.show_legend, self.render, side="right")
         self.zoom_text = tk.StringVar(value="Zoom")
         self.pixel_text = tk.StringVar(value="Pixel: move the pointer over the image")
         ttk.Label(info, textvariable=self.zoom_text, padding=(8, 7)).pack(fill="x")
@@ -312,28 +327,26 @@ class ThermalApp:
             self.settings.palette,
             lambda: self.palette_changed(self.palette.get()),
         )
-        self.fixed_scale = tk.BooleanVar(
-            value=self.settings.range_mode == "Fixed"
-        )
-        ttk.Checkbutton(
+        self.fixed_scale = tk.BooleanVar(value=self.settings.range_mode == "Fixed")
+        checkbox(
             display,
-            text="Fixed scale",
-            variable=self.fixed_scale,
-            command=self.update_settings,
-        ).pack(anchor="w", pady=6)
+            "Fixed scale",
+            self.fixed_scale,
+            self.update_settings,
+            anchor="w",
+            pady=6,
+        )
         self.range_mode = tk.StringVar(
             value="Fixed" if self.fixed_scale.get() else "Auto percentile"
         )
         self.low = tk.StringVar(value="15")
         self.high = tk.StringVar(value="40")
         for label, variable in [("Minimum °C", self.low), ("Maximum °C", self.high)]:
-            ttk.Label(display, text=label).pack(anchor="w")
+            caption(display, label)
             ttk.Entry(display, textvariable=variable, width=22).pack(
                 fill="x", pady=(2, 6)
             )
-        ttk.Button(display, text="Apply range", command=self.update_settings).pack(
-            fill="x"
-        )
+        button(display, "Apply range", self.update_settings)
         self.palette_note = tk.StringVar(
             value="Factory palette: range follows Auto / Fixed."
         )
@@ -344,15 +357,15 @@ class ThermalApp:
         tabs.add(filters, text="Filters")
         self.peaking = tk.BooleanVar(value=False)
         self.peaking_threshold = tk.DoubleVar(value=0.35)
-        ttk.Checkbutton(
+        checkbox(
             filters,
-            text="Focus peaking · green edge overlay",
-            variable=self.peaking,
-            command=self.render,
-        ).pack(anchor="w", pady=6)
-        ttk.Label(filters, text="Peaking threshold (lower highlights more edges)").pack(
-            anchor="w"
+            "Focus peaking · green edge overlay",
+            self.peaking,
+            self.render,
+            anchor="w",
+            pady=6,
         )
+        caption(filters, "Peaking threshold (lower highlights more edges)")
         ttk.Scale(
             filters,
             from_=0.05,
@@ -390,14 +403,14 @@ class ThermalApp:
         ttk.Checkbutton(
             filters, text="X³ · unavailable in current USB driver", state="disabled"
         ).pack(anchor="w", pady=8)
-        ttk.Label(
+        caption(
             filters,
-            text="X³ needs a verified camera command or the manufacturer's algorithm. It is not ordinary zoom.",
+            "X³ needs a verified camera command or the manufacturer's algorithm. It is not ordinary zoom.",
             wraplength=290,
-        ).pack(anchor="w", pady=8)
-        ttk.Label(filters, text="Temporal filter: current-frame weight").pack(
-            anchor="w"
+            anchor="w",
+            pady=8,
         )
+        caption(filters, "Temporal filter: current-frame weight")
         self.alpha = tk.DoubleVar(value=0.35)
         ttk.Scale(
             filters,
@@ -406,11 +419,13 @@ class ThermalApp:
             variable=self.alpha,
             command=lambda value: self.update_settings(),
         ).pack(fill="x")
-        ttk.Label(
+        caption(
             filters,
-            text="Temporal filtering applies only to Filtered temperature. All pixel readouts use original RAW.\n\nAbsolute temperature palettes bypass CLAHE and DDE to preserve their temperature thresholds.",
+            "Temporal filtering applies only to Filtered temperature. Pixel measurements stay independent of display filters.\n\nCLAHE and DDE work with every palette; enhanced colors no longer indicate exact temperature thresholds.",
             wraplength=290,
-        ).pack(anchor="w", pady=15)
+            anchor="w",
+            pady=15,
+        )
         view = ttk.Frame(tabs.viewport, padding=12)
         tabs.add(view, text="Sensor")
         for label, fn in [
@@ -419,21 +434,25 @@ class ThermalApp:
             ("Rotate 90°", self.rotate),
             ("Mirror", self.flip),
         ]:
-            ttk.Button(view, text=label, command=fn).pack(fill="x", pady=2)
+            button(view, label, fn, fill="x", pady=2)
         self.remember_mirror = tk.BooleanVar(value=self.preferences.remember)
-        ttk.Checkbutton(
+        checkbox(
             view,
-            text="Remember mirror for this camera",
-            variable=self.remember_mirror,
-            command=self.save_preferences,
-        ).pack(anchor="w", pady=6)
+            "Remember mirror for this camera",
+            self.remember_mirror,
+            self.save_preferences,
+            anchor="w",
+            pady=6,
+        )
         self.spots = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        checkbox(
             view,
-            text="Minimum / maximum markers",
-            variable=self.spots,
-            command=self.render,
-        ).pack(anchor="w", pady=5)
+            "Minimum / maximum markers",
+            self.spots,
+            self.render,
+            anchor="w",
+            pady=5,
+        )
         self.gain = self.combo(
             view,
             "Sensor gain",
@@ -461,7 +480,7 @@ class ThermalApp:
         )
 
     def combo(self, parent, label, values, value, callback=None):
-        ttk.Label(parent, text=label).pack(anchor="w")
+        caption(parent, label)
         variable = tk.StringVar(value=value)
         widget = ttk.Combobox(
             parent, textvariable=variable, values=values, state="readonly", width=25
@@ -507,9 +526,9 @@ class ThermalApp:
             self.detail.get(),
             self.clahe.get(),
             self.dde_strength.get(),
-            False,
-            False,
-            True,
+            self.custom_auto.get(),
+            self.settings.enhance_custom_palette,
+            self.settings.enhancements_enabled,
         )
         self.processor.reset()
         self._render_key = None
@@ -595,9 +614,7 @@ class ThermalApp:
                     self._retry_at = time.monotonic() + self.RECONNECT_DELAY
                     self.frame = None
                     self.measured = None
-                    self.canvas.raw = self.canvas.rgb = self.canvas.coordinates = None
-                    self.canvas.empty_message = "No camera · waiting for reconnection…"
-                    self.canvas.redraw()
+                    self.canvas.clear("No camera · waiting for reconnection…")
                     self.pixel_text.set("Pixel: no camera")
                     self.statistics.set("No camera connected")
                     self.legend.set("")
@@ -675,53 +692,25 @@ class ThermalApp:
         if self.peaking.get():
             rgb = focus_peaking(rgb, self.frame.raw, self.peaking_threshold.get())
         raw = orient(self.frame.raw, self.rotation, self.mirror)
-        if self._coordinates is None or self._coordinates.shape[:2] != self.frame.raw.shape:
-            self._coordinates = np.moveaxis(
-                np.indices(self.frame.raw.shape), 0, -1
-            )
-        coords = self._coordinates
+        coords = sensor_coordinates(self.frame.raw.shape, self.rotation, self.mirror)
         self.canvas.regions = self.analysis.regions
         oriented_measured = orient(self.measured, self.rotation, self.mirror)
-        self.canvas.native_measurements = oriented_measured
+        self.canvas.native_measurements = self.measured
         self.canvas.measurements = oriented_measured
         self.canvas.corrected = self.correction_active
         self.canvas.markers = self.spots.get()
         self.canvas.show_legend = self.show_legend.get()
-        unit = (
-            "counts"
-            if self.settings.mode == "Raw counts" and not custom
-            else "°C"
+        unit = "counts" if self.settings.mode == "Raw counts" else "°C"
+        bands = self.processor.temperature_bands
+        self.canvas.legend_data = (
+            (legend_colors(self.settings, custom), *limits, unit)
+            if bands is None and limits
+            else (legend_colors(self.settings, custom), 0.0, 255.0, "°C min/max", bands)
         )
-        legend_limits = limits
-        if self.settings.mode == "Factory brightness":
-            finite_temperatures = self.measured[np.isfinite(self.measured)]
-            legend_limits = (
-                tuple(np.percentile(finite_temperatures, (1, 99)))
-                if finite_temperatures.size
-                else (0.0, 1.0)
-            )
-        if legend_limits:
-            legend_data = (
-                legend_colors(self.settings, custom),
-                float(legend_limits[0]),
-                float(legend_limits[1]),
-                unit,
-            )
-            if self.processor.temperature_bands is not None:
-                legend_data += (self.processor.temperature_bands,)
-        else:
-            legend_data = (
-                legend_colors(self.settings),
-                0.0,
-                255.0,
-                unit + " min/max",
-                self.processor.temperature_bands,
-            )
-        self.canvas.legend_data = legend_data
         self.canvas.set_frame(
             orient(rgb, self.rotation, self.mirror),
             raw,
-            orient(coords, self.rotation, self.mirror),
+            coords,
         )
         data = self.measured[np.isfinite(self.measured)]
         minimum, maximum, mean = (
@@ -735,7 +724,7 @@ class ThermalApp:
         )
         unit = (
             "counts"
-            if self.settings.mode == "Raw counts" and not custom
+            if self.settings.mode == "Raw counts"
             else "brightness"
             if self.settings.mode == "Factory brightness"
             else "°C"
@@ -955,6 +944,8 @@ class ThermalApp:
             self.library.save(palette)
             self.palette_panel.refresh()
             selected = palette.name
+        if self.workspace:
+            self.workspace.stop_playback()
         self.analysis = restored_analysis
         self.analysis_shape = frame.raw.shape
         self.offline = True
@@ -969,9 +960,7 @@ class ThermalApp:
         self._combos["Source"].configure(values=sources)
         self.mode.set(restored.mode if restored.mode in sources else "Temperature")
         self.fixed_scale.set(restored.range_mode == "Fixed")
-        self.range_mode.set(
-            "Fixed" if self.fixed_scale.get() else "Auto percentile"
-        )
+        self.range_mode.set("Fixed" if self.fixed_scale.get() else "Auto percentile")
         self.low.set(str(restored.minimum))
         self.high.set(str(restored.maximum))
         self.alpha.set(restored.alpha)
@@ -979,6 +968,7 @@ class ThermalApp:
         self.detail.set(restored.detail)
         self.dde_strength.set(restored.dde_strength)
         self.custom_auto.set(restored.custom_auto_scale)
+        self.settings = restored
         self.canvas.auto_fit = True
         self.pause_button.configure(text="Return to live")
         self._render_key = None
@@ -1010,9 +1000,7 @@ class ThermalApp:
         self._render_key = None
         self.frame = None
         self.measured = None
-        self.canvas.raw = self.canvas.rgb = self.canvas.coordinates = None
-        self.canvas.empty_message = "Waiting for live camera…"
-        self.canvas.redraw()
+        self.canvas.clear("Waiting for live camera…")
         self.pixel_text.set("Pixel: waiting for live camera")
         self.statistics.set("Waiting for live camera")
         self.legend.set("")
@@ -1055,7 +1043,11 @@ class ThermalApp:
         ):
             return None
         canvas = (
-            self.comparison.canvases[self.comparison.active_index]
+            (
+                self.comparison.split_canvas
+                if self.comparison.split_view.get()
+                else self.comparison.canvases[self.comparison.active_index]
+            )
             if self.sidebar.selection.get() == "Compare"
             else self.canvas
         )

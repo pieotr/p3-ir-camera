@@ -13,6 +13,8 @@
 | `comparison_ui.py` | Independent A/B snapshots, shared temperature scale and native-coordinate differences. |
 | `preferences.py` | Validated, atomic per-model mirror preferences separate from project metadata. |
 | `sidebar.py` | Compact two-row section strip above the right pane, separate utility buttons and scrollable tool pages. |
+| `widgets.py` | Small shared button, checkbox and explanatory-label builders. |
+| `storage.py` | Atomic replacement for JSON, NPZ and image exports. |
 | `scrolling.py` | Two-axis overflow, automatic scrollbars and control-area wheel routing. |
 | `export.py` | NPZ validation/migration, RAW import and presentation-image export. |
 | `palettes.py` | Absolute-temperature palette validation, mapping and atomic JSON persistence. |
@@ -54,7 +56,7 @@ Native conversion uses float64 and six-decimal formatting to preserve 1/64 K enc
 
 Rendering is cached by frame/settings/analysis revision. Changing orientation must not apply temporal filtering to the same frame repeatedly. Reset processing state after settings changes, imports and reconnection. Auto range uses 1st/99th percentiles with a 0.15 adaptation weight. Temporal temperature EMA defaults to 0.35 with a configurable 0.05–1 weight.
 
-DDE is float32 unsharp masking with Gaussian sigma 1.2 sensor pixels and strength 0–4, default 1.5. Rounding/clipping occurs at the final 8-bit mapping. CLAHE and DDE are independent. Absolute temperature palettes bypass these operations and normalization.
+DDE is float32 unsharp masking with Gaussian sigma 1.2 sensor pixels and strength 0–4, default 1.5. Rounding/clipping occurs at the final 8-bit mapping. CLAHE and DDE are independent. All palettes share normalization and these optional filters; a cached 256-entry RGB ramp maps display indices to colors. Measurements remain independent of this quantization.
 
 Factory brightness and nonlinear filters cannot provide a global one-to-one temperature legend. Their five palette-index bands are 0–31, 32–95, 96–159, 160–223 and 224–255. Each reports observed min/max temperatures of pixels mapped into that band. Empty bands have no value; bands may overlap in temperature or be non-monotonic.
 
@@ -105,6 +107,9 @@ The main horizontal `Panedwindow` splits images and settings. A nested vertical 
 
 GUI verification includes a 520×360 window, English/Polish two-row navigation, both separators, bottom-of-content reachability and overflow scrollbars.
 
-The settings sidebar keeps its vertical scrollbar visible even when the selected page fits, so its location stays predictable. Other overflow bars remain automatic. Section buttons use a subtle one-pixel outline.
+All scrollbars disappear when content fits; wheel gestures cannot move a fitting page. Canvas windows retain their natural requested height so an editor populated after selection immediately acquires its correct geometry. Section buttons use a subtle one-pixel outline.
 
 Scrollable page widgets must be created with `sidebar.viewport` as their Tk parent; `Sidebar.add` enforces this contract. A sibling of the viewport can be placed in a canvas window but is not clipped by that canvas, allowing its controls to cover scrollbars and adjacent UI. GUI regression checks use screen hit-testing on the scrollbar, not just `winfo_ismapped`, to verify it is actually accessible.
+
+
+Coordinate maps are cached by sensor shape, quarter-turn rotation and mirror. Canvas inverse maps make sensor-to-screen ROI lookup constant-time. Native measurement arrays remain in sensor coordinates; only display arrays are oriented. Split comparison combines each source's RGB, RAW and corrected plane at the same boundary. Timeline arrays are cached, and sequence analysis iterates with one read-only connection. See [optimization audit](OPTIMIZATION.md) for measurements and validation limits.
